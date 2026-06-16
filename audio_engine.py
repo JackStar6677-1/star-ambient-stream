@@ -113,7 +113,7 @@ SCENE_PROFILES = {
         'wind_gain': 0.5, 'bell_gain': 0.05, 'ding_gain': 0.7,
         'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
         'elec_hum': True, 'rain_glass': True, 'blizzard': False,
-        'creak_gain': 0.0, 'city_gain': 0.12, 'clock_night': True, 'cassette': 0.014,
+        'creak_gain': 0.0, 'city_gain': 0.12, 'clock_night': True, 'cassette': 0.003,
         'label': 'ORBITAL STATION',
     },
     'nieve':     {
@@ -123,7 +123,7 @@ SCENE_PROFILES = {
         'wind_gain': 1.8, 'bell_gain': 0.08, 'ding_gain': 0.4,
         'rain_base': 0.28, 'rain_wx_mul': 0.4, 'snow': True,
         'elec_hum': False, 'rain_glass': True, 'blizzard': True,
-        'creak_gain': 0.6, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.010,
+        'creak_gain': 0.6, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
         'label': 'ARCTIC OUTPOST',
     },
     'bosque':    {
@@ -133,7 +133,7 @@ SCENE_PROFILES = {
         'wind_gain': 0.9, 'bell_gain': 0.10, 'ding_gain': 0.0,
         'rain_base': 0.55, 'rain_wx_mul': 0.9, 'snow': False,
         'elec_hum': False, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.008,
+        'creak_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
         'label': 'FOREST STATION',
     },
     'submarina': {
@@ -143,7 +143,7 @@ SCENE_PROFILES = {
         'wind_gain': 0.2, 'bell_gain': 0.12, 'ding_gain': 0.5,
         'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
         'elec_hum': True, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.35, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.012,
+        'creak_gain': 0.35, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
         'label': 'DEEP SEA BASE',
     },
     'montana':   {
@@ -153,7 +153,7 @@ SCENE_PROFILES = {
         'wind_gain': 2.2, 'bell_gain': 0.07, 'ding_gain': 0.0,
         'rain_base': 0.30, 'rain_wx_mul': 0.8, 'snow': False,
         'elec_hum': False, 'rain_glass': False, 'blizzard': True,
-        'creak_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.008,
+        'creak_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
         'label': 'MOUNTAIN BASE',
     },
     'desierto':  {
@@ -163,7 +163,7 @@ SCENE_PROFILES = {
         'wind_gain': 0.7, 'bell_gain': 0.04, 'ding_gain': 0.0,
         'rain_base': 0.0, 'rain_wx_mul': 0.08, 'snow': False,
         'elec_hum': False, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.010,
+        'creak_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
         'label': 'DESERT HEAT',
     },
 }
@@ -460,19 +460,20 @@ class Synthesizer:
         sonar = np.zeros(n)
         sonar[mask] = np.sin(pt[mask]*2*np.pi*state.sonar_freq) * np.exp(-20.0*pt[mask]) * 0.008
 
-        ambient = self.ambient.generate_chunk(self.t_abs, n, state)
+        ambient_wet, ambient_dry = self.ambient.generate_chunk(self.t_abs, n, state)
 
-        mix = (
-            pad     * 0.32 +
-            drone   * 0.30 +   # reducido de 0.85 — dominaba todo el headroom
-            wind    * 0.20 +
-            mel     * 0.75 +
-            bells   * 0.10 +
-            sonar   * 0.04 +
-            ambient * 0.85
+        wet = (
+            pad          * 0.32 +
+            drone        * 0.30 +
+            wind         * 0.20 +
+            mel          * 0.75 +
+            bells        * 0.10 +
+            sonar        * 0.04 +
+            ambient_wet  * 0.85
         )
         self.t_abs += n / SR
-        return mix
+        # Retorna (wet, dry) — wet va al pedalboard, dry se suma después
+        return wet, ambient_dry
 
 
 # ──────────────────────────────────────────────────────────
@@ -951,7 +952,7 @@ class AmbientSounds:
         lfo = (0.45 + 0.35 * np.abs(np.sin(2*np.pi*0.07*(t + self.gust_lfo_t))) +
                0.20 * np.sin(2*np.pi*0.19*(t + self.gust_lfo_t)) ** 2)
         self.gust_lfo_t += n / SR
-        return gust_raw * lfo * 0.038 * wind_gain
+        return gust_raw * lfo * 0.018 * wind_gain
 
     # ── Crujido estructural ────────────────────────────────
     def _creak_chunk(self, t_abs, n, creak_gain):
@@ -1043,19 +1044,25 @@ class AmbientSounds:
         cart     = self._cart_chunk(t_abs, n)
         water    = self._water_chunk(t_abs, n, prof['water_gain'])
         knock    = self._knock_chunk(t_abs, n, state.scene)
-        hum      = self._elec_hum_chunk(n, prof['elec_hum'])
         blizzard = self._blizzard_chunk(t_abs, n, prof['wind_gain']) if prof['blizzard'] else np.zeros(n)
         creak    = self._creak_chunk(t_abs, n, prof['creak_gain'])
-        city     = self._city_chunk(t_abs, n, prof['city_gain'])
-        clock    = self._clock_chunk(t_abs, n, prof['clock_night'])
-        cassette = self._cassette_chunk(n, prof['cassette'])
 
         rain_gain = prof['rain_base'] + state.rain_intensity * prof['rain_wx_mul']
         rain = self._rain_chunk(t_abs, n, rain_gain,
                                 is_snow=prof['snow'], rain_glass=prof['rain_glass'])
 
-        return (radio + fan + steps + dings + cart + water + knock * 0.5 +
-                rain + hum + blizzard + creak + city + clock + cassette)
+        # Señal que va al pedalboard (chorus + reverb)
+        wet_mix = (radio + fan + steps + dings + cart + water + knock * 0.5 +
+                   rain + blizzard + creak)
+
+        # Señal DRY: bypass pedalboard — no chorus, no reverb, no cola de ruido
+        hum      = self._elec_hum_chunk(n, prof['elec_hum'])
+        city     = self._city_chunk(t_abs, n, prof['city_gain'])
+        clock    = self._clock_chunk(t_abs, n, prof['clock_night'])
+        cassette = self._cassette_chunk(n, prof['cassette'])
+        dry_mix  = hum + city + clock + cassette
+
+        return wet_mix, dry_mix
 
 
 # ──────────────────────────────────────────────────────────
@@ -1150,14 +1157,18 @@ def main():
             else:
                 update_board_inplace(board, state)
 
-            audio = synth.generate_chunk(state)
-            audio = np.nan_to_num(audio, nan=0.0, posinf=0.8, neginf=-0.8)
-            audio = np.clip(audio, -1.0, 1.0)
+            wet, dry = synth.generate_chunk(state)
+            wet = np.nan_to_num(wet, nan=0.0, posinf=0.8, neginf=-0.8)
+            wet = np.clip(wet, -1.0, 1.0)
 
             if board and HAS_PEDALBOARD:
-                audio_f32 = np.clip(audio.astype(np.float32), -1.0, 1.0).reshape(1, -1)
-                processed = board(audio_f32, SR)
-                audio = np.nan_to_num(processed.flatten().astype(np.float64), nan=0.0)
+                wet_f32 = np.clip(wet.astype(np.float32), -1.0, 1.0).reshape(1, -1)
+                processed = board(wet_f32, SR)
+                wet = np.nan_to_num(processed.flatten().astype(np.float64), nan=0.0)
+
+            # Dry bypass: hum eléctrico, city, clock, cassette — sin chorus/reverb
+            dry = np.nan_to_num(dry, nan=0.0)
+            audio = wet + dry
 
             audio = np.tanh(audio * 0.88)
             peak  = np.max(np.abs(audio))
