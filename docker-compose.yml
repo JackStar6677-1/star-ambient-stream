@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  streamer:
+    build: .
+    container_name: youtube_streamer
+    restart: always
+    volumes:
+      - ./token.pickle:/app/token.pickle   # generado por auth.py, no subir a git
+      - ./scenes:/app/scenes               # videos MP4 de cada escena
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"

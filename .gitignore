@@ -1,0 +1,26 @@
+# Credenciales OAuth — NUNCA subir
+token.pickle
+client_secrets.json
+*.pickle
+*.json
+
+# Videos y audio — demasiado grandes, agregar los propios
+scenes/
+*.mp4
+*.wav
+*.mkv
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+
+# Logs y temporales
+*.log
+/tmp/
+
+# Archivos de análisis temporal
+analyze_audio.py
