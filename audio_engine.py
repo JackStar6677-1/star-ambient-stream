@@ -460,20 +460,19 @@ class Synthesizer:
         sonar = np.zeros(n)
         sonar[mask] = np.sin(pt[mask]*2*np.pi*state.sonar_freq) * np.exp(-20.0*pt[mask]) * 0.008
 
-        ambient_wet, ambient_dry = self.ambient.generate_chunk(self.t_abs, n, state)
+        ambient = self.ambient.generate_chunk(self.t_abs, n, state)
 
-        wet = (
-            pad          * 0.32 +
-            drone        * 0.30 +
-            wind         * 0.20 +
-            mel          * 0.75 +
-            bells        * 0.10 +
-            sonar        * 0.04 +
-            ambient_wet  * 0.85
+        mix = (
+            pad     * 0.32 +
+            drone   * 0.30 +
+            wind    * 0.20 +
+            mel     * 0.75 +
+            bells   * 0.10 +
+            sonar   * 0.04 +
+            ambient * 0.85
         )
         self.t_abs += n / SR
-        # Retorna (wet, dry) — wet va al pedalboard, dry se suma después
-        return wet, ambient_dry
+        return mix
 
 
 # ──────────────────────────────────────────────────────────
@@ -928,7 +927,7 @@ class AmbientSounds:
             return np.zeros(n)
         t     = np.arange(n) / SR
         freqs = [50.0, 100.0, 150.0, 200.0]
-        amps  = [0.011, 0.006, 0.003, 0.0015]
+        amps  = [0.0022, 0.0012, 0.0006, 0.0003]
         out   = np.zeros(n)
         for i, (f, a) in enumerate(zip(freqs, amps)):
             out += np.sin(self.hum_ph[i] + 2*np.pi*f*t) * a
@@ -1046,23 +1045,17 @@ class AmbientSounds:
         knock    = self._knock_chunk(t_abs, n, state.scene)
         blizzard = self._blizzard_chunk(t_abs, n, prof['wind_gain']) if prof['blizzard'] else np.zeros(n)
         creak    = self._creak_chunk(t_abs, n, prof['creak_gain'])
+        hum      = self._elec_hum_chunk(n, prof['elec_hum'])
+        city     = self._city_chunk(t_abs, n, prof['city_gain'])
+        clock    = self._clock_chunk(t_abs, n, prof['clock_night'])
+        cassette = self._cassette_chunk(n, prof['cassette'])
 
         rain_gain = prof['rain_base'] + state.rain_intensity * prof['rain_wx_mul']
         rain = self._rain_chunk(t_abs, n, rain_gain,
                                 is_snow=prof['snow'], rain_glass=prof['rain_glass'])
 
-        # Señal que va al pedalboard (chorus + reverb)
-        wet_mix = (radio + fan + steps + dings + cart + water + knock * 0.5 +
-                   rain + blizzard + creak)
-
-        # Señal DRY: bypass pedalboard — no chorus, no reverb, no cola de ruido
-        hum      = self._elec_hum_chunk(n, prof['elec_hum'])
-        city     = self._city_chunk(t_abs, n, prof['city_gain'])
-        clock    = self._clock_chunk(t_abs, n, prof['clock_night'])
-        cassette = self._cassette_chunk(n, prof['cassette'])
-        dry_mix  = hum + city + clock + cassette
-
-        return wet_mix, dry_mix
+        return (radio + fan + steps + dings + cart + water + knock * 0.5 +
+                rain + blizzard + creak + hum + city + clock + cassette)
 
 
 # ──────────────────────────────────────────────────────────
@@ -1157,18 +1150,14 @@ def main():
             else:
                 update_board_inplace(board, state)
 
-            wet, dry = synth.generate_chunk(state)
-            wet = np.nan_to_num(wet, nan=0.0, posinf=0.8, neginf=-0.8)
-            wet = np.clip(wet, -1.0, 1.0)
+            audio = synth.generate_chunk(state)
+            audio = np.nan_to_num(audio, nan=0.0, posinf=0.8, neginf=-0.8)
+            audio = np.clip(audio, -1.0, 1.0)
 
             if board and HAS_PEDALBOARD:
-                wet_f32 = np.clip(wet.astype(np.float32), -1.0, 1.0).reshape(1, -1)
-                processed = board(wet_f32, SR)
-                wet = np.nan_to_num(processed.flatten().astype(np.float64), nan=0.0)
-
-            # Dry bypass: hum eléctrico, city, clock, cassette — sin chorus/reverb
-            dry = np.nan_to_num(dry, nan=0.0)
-            audio = wet + dry
+                audio_f32 = np.clip(audio.astype(np.float32), -1.0, 1.0).reshape(1, -1)
+                processed = board(audio_f32, SR)
+                audio = np.nan_to_num(processed.flatten().astype(np.float64), nan=0.0)
 
             audio = np.tanh(audio * 0.88)
             peak  = np.max(np.abs(audio))
