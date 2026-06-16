@@ -111,6 +111,9 @@ SCENE_PROFILES = {
         'chorus_base': 0.42, 'sub_base': 0.018,
         'fan_gain': 1.6, 'radio_gain': 0.10, 'water_gain': 0.0,
         'wind_gain': 0.5, 'bell_gain': 0.05, 'ding_gain': 0.7,
+        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
+        'elec_hum': True, 'rain_glass': True, 'blizzard': False,
+        'creak_gain': 0.0, 'city_gain': 0.12, 'clock_night': True, 'cassette': 0.014,
         'label': 'ORBITAL STATION',
     },
     'nieve':     {
@@ -118,6 +121,9 @@ SCENE_PROFILES = {
         'chorus_base': 0.34, 'sub_base': 0.012,
         'fan_gain': 0.7, 'radio_gain': 0.07, 'water_gain': 0.0,
         'wind_gain': 1.8, 'bell_gain': 0.08, 'ding_gain': 0.4,
+        'rain_base': 0.28, 'rain_wx_mul': 0.4, 'snow': True,
+        'elec_hum': False, 'rain_glass': True, 'blizzard': True,
+        'creak_gain': 0.6, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.010,
         'label': 'ARCTIC OUTPOST',
     },
     'bosque':    {
@@ -125,6 +131,9 @@ SCENE_PROFILES = {
         'chorus_base': 0.28, 'sub_base': 0.010,
         'fan_gain': 0.0, 'radio_gain': 0.0, 'water_gain': 0.5,
         'wind_gain': 0.9, 'bell_gain': 0.10, 'ding_gain': 0.0,
+        'rain_base': 0.55, 'rain_wx_mul': 0.9, 'snow': False,
+        'elec_hum': False, 'rain_glass': False, 'blizzard': False,
+        'creak_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.008,
         'label': 'FOREST STATION',
     },
     'submarina': {
@@ -132,6 +141,9 @@ SCENE_PROFILES = {
         'chorus_base': 0.18, 'sub_base': 0.022,
         'fan_gain': 0.4, 'radio_gain': 0.05, 'water_gain': 1.0,
         'wind_gain': 0.2, 'bell_gain': 0.12, 'ding_gain': 0.5,
+        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
+        'elec_hum': True, 'rain_glass': False, 'blizzard': False,
+        'creak_gain': 0.35, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.012,
         'label': 'DEEP SEA BASE',
     },
     'montana':   {
@@ -139,6 +151,9 @@ SCENE_PROFILES = {
         'chorus_base': 0.28, 'sub_base': 0.010,
         'fan_gain': 0.0, 'radio_gain': 0.0, 'water_gain': 0.2,
         'wind_gain': 2.2, 'bell_gain': 0.07, 'ding_gain': 0.0,
+        'rain_base': 0.30, 'rain_wx_mul': 0.8, 'snow': False,
+        'elec_hum': False, 'rain_glass': False, 'blizzard': True,
+        'creak_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.008,
         'label': 'MOUNTAIN BASE',
     },
     'desierto':  {
@@ -146,6 +161,9 @@ SCENE_PROFILES = {
         'chorus_base': 0.18, 'sub_base': 0.008,
         'fan_gain': 0.0, 'radio_gain': 0.0, 'water_gain': 0.0,
         'wind_gain': 0.7, 'bell_gain': 0.04, 'ding_gain': 0.0,
+        'rain_base': 0.0, 'rain_wx_mul': 0.08, 'snow': False,
+        'elec_hum': False, 'rain_glass': False, 'blizzard': False,
+        'creak_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.010,
         'label': 'DESERT HEAT',
     },
 }
@@ -207,6 +225,16 @@ def fetch_viewers():
         return 0
 
 
+def weather_rain_intensity(w_code):
+    """Intensidad de lluvia 0–1 según weather_code de Open-Meteo."""
+    if 51 <= w_code <= 57:  return 0.30   # llovizna
+    if 61 <= w_code <= 67:  return 0.65   # lluvia moderada
+    if 71 <= w_code <= 77:  return 0.45   # nieve
+    if 80 <= w_code <= 82:  return 0.85   # chubascos
+    if 95 <= w_code <= 99:  return 1.00   # tormenta
+    return 0.0
+
+
 def fetch_scene():
     try:
         with open(SCENE_FILE) as f:
@@ -258,6 +286,7 @@ class AudioState:
         self.temp = 15.0; self.humidity = 50.0; self.wind_spd = 5.0; self.w_code = 0
         self.devices = 0; self.load1 = 0.5; self.viewers = 0
         self.load_ram_pct = 0.0
+        self.rain_intensity = 0.0   # calculado de w_code en update_targets
 
     def update_targets(self):
         new_scene = fetch_scene()
@@ -281,6 +310,7 @@ class AudioState:
         self.t_density    = float(np.clip(d + device_bonus + viewer_bonus - load_pen * 0.15, 0.05, 1.0))
         self.t_energy     = float(np.clip(e + (self.wind_spd / 50.0) * 0.12 - load_pen * 0.1, 0.05, 1.0))
         self.t_sub        = prof['sub_base'] * (1.0 + self.t_energy * 0.5)
+        self.rain_intensity = weather_rain_intensity(self.w_code)
         self.t_reverb     = prof['reverb_base']
         self.t_reverb_wet = prof['wet_base']
         self.t_chorus     = prof['chorus_base']
@@ -506,8 +536,36 @@ class AmbientSounds:
 
         # ── Knock / golpe puerta ──
         self.knock_next   = 120.0
-        self.knock_queue  = []      # [(t_abs, freq, amp, decay, n_hits)]
+        self.knock_queue  = []
         self.knock_hit_i  = 0
+
+        # ── Lluvia ──
+        self.rain_rng   = np.random.RandomState(77)
+        self.rain_zi    = None
+        self.rain_lfo_t = 0.0
+        self.drop_queue = []
+        self.drop_next  = 1.0
+
+        # ── Hum eléctrico (50 Hz + armónicos) ──
+        self.hum_ph = [0.0, 0.0, 0.0, 0.0]   # fases para 50/100/150/200 Hz
+
+        # ── Blizzard (viento en ráfagas) ──
+        self.gust_rng   = np.random.RandomState(13)
+        self.gust_zi    = None
+        self.gust_lfo_t = 0.0
+
+        # ── Crujido estructural ──
+        self.creak_next  = 40.0
+        self.creak_queue = []
+        self.creak_rng   = random.Random(31337)
+
+        # ── Murmullo distante ciudad/maquinaria ──
+        self.city_rng = np.random.RandomState(55)
+        self.city_zi  = None
+
+        # ── Cassette hiss nocturno ──
+        self.cass_rng = np.random.RandomState(88)
+        self.cass_zi  = None
 
     # ── Radio walkie-talkie ─────────────────────────────────
     def _new_phrase(self):
@@ -815,19 +873,189 @@ class AmbientSounds:
         self.knock_queue = [(ts,f,a,d) for (ts,f,a,d) in still]
         return out
 
+    # ── Lluvia procedural ─────────────────────────────────
+    def _rain_chunk(self, t_abs, n, rain_gain, is_snow=False, rain_glass=False):
+        """Hiss de lluvia/nieve + gotas individuales + resonancia de vidrio."""
+        if rain_gain <= 0:
+            return np.zeros(n)
+        noise = self.rain_rng.uniform(-1, 1, n).astype(np.float64)
+        nyq = SR / 2.0
+
+        lo = np.clip(150 / nyq if is_snow else 700 / nyq, 0.005, 0.490)
+        hi = np.clip(2500 / nyq if is_snow else 14000 / nyq, lo + 0.01, 0.495)
+        sos = sps.butter(3, [lo, hi], btype='band', output='sos')
+        if self.rain_zi is None:
+            self.rain_zi = sps.sosfilt_zi(sos) * noise[0]
+        hiss, self.rain_zi = sps.sosfilt(sos, noise, zi=self.rain_zi)
+
+        t = np.arange(n) / SR
+        lfo = 0.75 + 0.25 * np.abs(np.sin(2*np.pi*0.022*(t + self.rain_lfo_t)))
+        self.rain_lfo_t += n / SR
+
+        out = hiss * lfo * (0.022 if is_snow else 0.035) * rain_gain
+
+        if not is_snow:
+            while self.drop_next < t_abs + n / SR:
+                freq = self.rng.uniform(1000, 5000)
+                amp  = self.rng.uniform(0.006, 0.020) * rain_gain
+                dec  = self.rng.uniform(80, 300)
+                self.drop_queue.append((self.drop_next, freq, amp, dec))
+                self.drop_next += self.rng.uniform(0.008, 0.06) / max(rain_gain, 0.1)
+            still = []
+            for (ts, freq, amp, dec) in self.drop_queue:
+                s = int((ts - t_abs) * SR)
+                if s >= n:
+                    still.append((ts, freq, amp, dec)); continue
+                start = max(s, 0)
+                dur = min(int(0.04 * SR), n - start)
+                lt  = np.arange(dur) / SR
+                out[start:start+dur] += np.sin(2*np.pi*freq*lt) * amp * np.exp(-dec * lt)
+                if rain_glass:
+                    g_freq = 1900 + freq * 0.22
+                    g_dur  = min(int(0.10 * SR), n - start)
+                    g_lt   = np.arange(g_dur) / SR
+                    out[start:start+g_dur] += (np.sin(2*np.pi*g_freq*g_lt) *
+                                               amp * 0.45 * np.exp(-55*g_lt))
+            self.drop_queue = [(ts,f,a,d) for (ts,f,a,d) in still if ts > t_abs - 0.1]
+
+        return np.clip(out, -0.35, 0.35)
+
+    # ── Hum eléctrico (50 Hz + armónicos) ────────────────
+    def _elec_hum_chunk(self, n, elec_hum):
+        """Zumbido de transformador — orbital y submarina."""
+        if not elec_hum:
+            return np.zeros(n)
+        t     = np.arange(n) / SR
+        freqs = [50.0, 100.0, 150.0, 200.0]
+        amps  = [0.011, 0.006, 0.003, 0.0015]
+        out   = np.zeros(n)
+        for i, (f, a) in enumerate(zip(freqs, amps)):
+            out += np.sin(self.hum_ph[i] + 2*np.pi*f*t) * a
+            self.hum_ph[i] = (self.hum_ph[i] + 2*np.pi*f*n/SR) % (2*np.pi)
+        return out * (0.85 + 0.15 * np.sin(2*np.pi*6.7*t))
+
+    # ── Blizzard: viento en ráfagas ───────────────────────
+    def _blizzard_chunk(self, t_abs, n, wind_gain):
+        """Overlay gusty sobre el viento base — nieve y montaña."""
+        if wind_gain <= 0:
+            return np.zeros(n)
+        noise = self.gust_rng.uniform(-1, 1, n).astype(np.float64)
+        nyq = SR / 2.0
+        lo = np.clip(80 / nyq, 0.005, 0.490)
+        hi = np.clip(950 / nyq, lo + 0.01, 0.495)
+        sos = sps.butter(3, [lo, hi], btype='band', output='sos')
+        if self.gust_zi is None:
+            self.gust_zi = sps.sosfilt_zi(sos) * noise[0]
+        gust_raw, self.gust_zi = sps.sosfilt(sos, noise, zi=self.gust_zi)
+        t = np.arange(n) / SR
+        lfo = (0.45 + 0.35 * np.abs(np.sin(2*np.pi*0.07*(t + self.gust_lfo_t))) +
+               0.20 * np.sin(2*np.pi*0.19*(t + self.gust_lfo_t)) ** 2)
+        self.gust_lfo_t += n / SR
+        return gust_raw * lfo * 0.038 * wind_gain
+
+    # ── Crujido estructural ────────────────────────────────
+    def _creak_chunk(self, t_abs, n, creak_gain):
+        """El edificio cruje con el viento — nieve / submarino."""
+        if creak_gain <= 0:
+            return np.zeros(n)
+        out = np.zeros(n)
+        while self.creak_next < t_abs + n / SR:
+            freq = self.creak_rng.uniform(170, 380)
+            amp  = self.creak_rng.uniform(0.025, 0.065) * creak_gain
+            dur  = self.creak_rng.uniform(0.25, 1.0)
+            self.creak_queue.append((self.creak_next, freq, amp, dur))
+            self.creak_next += self.creak_rng.uniform(12, 40)
+        still = []
+        for (ts, freq, amp, dur) in self.creak_queue:
+            s = int((ts - t_abs) * SR)
+            if s >= n:
+                still.append((ts, freq, amp, dur)); continue
+            d = min(int(dur * SR), n - max(s, 0))
+            if d <= 0: continue
+            lt    = np.arange(d) / SR
+            # Pitch glide descendente (un crujido real baja de tono)
+            f_arr = freq * (1.0 - 0.28 * lt / max(dur, 0.001))
+            phase = 2*np.pi * np.cumsum(f_arr) / SR
+            env   = np.sin(np.pi * lt / max(dur, 0.001)) ** 0.7
+            start = max(s, 0)
+            out[start:start+d] += np.sin(phase) * amp * env
+        self.creak_queue = [(ts,f,a,d) for (ts,f,a,d) in still if ts > t_abs - 2.0]
+        return out
+
+    # ── Murmullo distante ciudad / maquinaria ──────────────
+    def _city_chunk(self, t_abs, n, city_gain):
+        """Rumble distante de sala de máquinas — orbital."""
+        if city_gain <= 0:
+            return np.zeros(n)
+        noise = self.city_rng.uniform(-1, 1, n).astype(np.float64)
+        nyq = SR / 2.0
+        lo = np.clip(55 / nyq, 0.005, 0.490)
+        hi = np.clip(230 / nyq, lo + 0.01, 0.495)
+        sos = sps.butter(2, [lo, hi], btype='band', output='sos')
+        if self.city_zi is None:
+            self.city_zi = sps.sosfilt_zi(sos) * 0.0
+        rumble, self.city_zi = sps.sosfilt(sos, noise, zi=self.city_zi)
+        t = np.arange(n) / SR
+        lfo = 0.70 + 0.30 * np.sin(2*np.pi*0.031*(t + t_abs))
+        return rumble * lfo * 0.016 * city_gain
+
+    # ── Tick de reloj subliminal (4AM) ────────────────────
+    def _clock_chunk(self, t_abs, n, clock_night):
+        """Tick casi inaudible — solo entre las 22h y las 5AM."""
+        if not clock_night:
+            return np.zeros(n)
+        if 5 <= time.localtime().tm_hour < 22:
+            return np.zeros(n)
+        out = np.zeros(n)
+        for beat in range(int(t_abs), int(t_abs + n / SR) + 2):
+            s = int((float(beat) - t_abs) * SR)
+            if 0 <= s < n:
+                dur = min(int(0.014 * SR), n - s)
+                lt  = np.arange(dur) / SR
+                out[s:s+dur] += np.sin(2*np.pi*3400*lt) * 0.007 * np.exp(-420*lt)
+        return out
+
+    # ── Cassette hiss nocturno ────────────────────────────
+    def _cassette_chunk(self, n, cass_level):
+        """Textura de cinta de cassette — solo de noche (18h-5AM)."""
+        if cass_level <= 0:
+            return np.zeros(n)
+        noise = self.cass_rng.uniform(-1, 1, n).astype(np.float64)
+        nyq = SR / 2.0
+        lo = np.clip(3800 / nyq, 0.005, 0.490)
+        hi = np.clip(11000 / nyq, lo + 0.01, 0.495)
+        sos = sps.butter(2, [lo, hi], btype='band', output='sos')
+        if self.cass_zi is None:
+            self.cass_zi = sps.sosfilt_zi(sos) * noise[0]
+        hiss, self.cass_zi = sps.sosfilt(sos, noise, zi=self.cass_zi)
+        if 5 <= time.localtime().tm_hour < 18:
+            return np.zeros(n)
+        return hiss * cass_level
+
     # ── Mezcla ────────────────────────────────────────────
     def generate_chunk(self, t_abs, n, state):
         prof = SCENE_PROFILES.get(state.scene, SCENE_PROFILES[DEFAULT_SCENE])
 
-        radio = self._radio_chunk(t_abs, n, prof['radio_gain'])
-        fan   = self._fan_chunk(n, prof['fan_gain'])
-        steps = self._step_chunk(t_abs, n, state.density)
-        dings = self._ding_chunk(t_abs, n, state.density, prof['ding_gain'])
-        cart  = self._cart_chunk(t_abs, n)
-        water = self._water_chunk(t_abs, n, prof['water_gain'])
-        knock = self._knock_chunk(t_abs, n, state.scene)
+        radio    = self._radio_chunk(t_abs, n, prof['radio_gain'])
+        fan      = self._fan_chunk(n, prof['fan_gain'])
+        steps    = self._step_chunk(t_abs, n, state.density)
+        dings    = self._ding_chunk(t_abs, n, state.density, prof['ding_gain'])
+        cart     = self._cart_chunk(t_abs, n)
+        water    = self._water_chunk(t_abs, n, prof['water_gain'])
+        knock    = self._knock_chunk(t_abs, n, state.scene)
+        hum      = self._elec_hum_chunk(n, prof['elec_hum'])
+        blizzard = self._blizzard_chunk(t_abs, n, prof['wind_gain']) if prof['blizzard'] else np.zeros(n)
+        creak    = self._creak_chunk(t_abs, n, prof['creak_gain'])
+        city     = self._city_chunk(t_abs, n, prof['city_gain'])
+        clock    = self._clock_chunk(t_abs, n, prof['clock_night'])
+        cassette = self._cassette_chunk(n, prof['cassette'])
 
-        return radio + fan + steps + dings + cart + water + knock * 0.5
+        rain_gain = prof['rain_base'] + state.rain_intensity * prof['rain_wx_mul']
+        rain = self._rain_chunk(t_abs, n, rain_gain,
+                                is_snow=prof['snow'], rain_glass=prof['rain_glass'])
+
+        return (radio + fan + steps + dings + cart + water + knock * 0.5 +
+                rain + hum + blizzard + creak + city + clock + cassette)
 
 
 # ──────────────────────────────────────────────────────────

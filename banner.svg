@@ -1,0 +1,170 @@
+<svg viewBox="0 0 900 320" xmlns="http://www.w3.org/2000/svg" role="img">
+  <title>Star Ambient Stream — Animated Banner</title>
+  <desc>Animated banner showing waveform, spectrum analyzer and HUD for the Star Ambient Stream project</desc>
+  <defs>
+    <style>
+      @keyframes bar0  { 0%,100%{height:12px;y:208px} 50%{height:55px;y:165px} }
+      @keyframes bar1  { 0%,100%{height:30px;y:190px} 50%{height:80px;y:140px} }
+      @keyframes bar2  { 0%,100%{height:18px;y:202px} 50%{height:100px;y:120px} }
+      @keyframes bar3  { 0%,100%{height:40px;y:180px} 50%{height:70px;y:150px} }
+      @keyframes bar4  { 0%,100%{height:10px;y:210px} 50%{height:120px;y:100px} }
+      @keyframes bar5  { 0%,100%{height:60px;y:160px} 50%{height:30px;y:190px} }
+      @keyframes bar6  { 0%,100%{height:90px;y:130px} 50%{height:15px;y:205px} }
+      @keyframes bar7  { 0%,100%{height:20px;y:200px} 50%{height:95px;y:125px} }
+      @keyframes bar8  { 0%,100%{height:45px;y:175px} 50%{height:60px;y:160px} }
+      @keyframes bar9  { 0%,100%{height:70px;y:150px} 50%{height:25px;y:195px} }
+      @keyframes bar10 { 0%,100%{height:35px;y:185px} 50%{height:88px;y:132px} }
+      @keyframes bar11 { 0%,100%{height:15px;y:205px} 50%{height:105px;y:115px} }
+      @keyframes bar12 { 0%,100%{height:50px;y:170px} 50%{height:40px;y:180px} }
+      @keyframes bar13 { 0%,100%{height:80px;y:140px} 50%{height:18px;y:202px} }
+      @keyframes bar14 { 0%,100%{height:22px;y:198px} 50%{height:75px;y:145px} }
+      @keyframes bar15 { 0%,100%{height:65px;y:155px} 50%{height:35px;y:185px} }
+      @keyframes bar16 { 0%,100%{height:12px;y:208px} 50%{height:110px;y:110px} }
+      @keyframes bar17 { 0%,100%{height:88px;y:132px} 50%{height:20px;y:200px} }
+      @keyframes bar18 { 0%,100%{height:30px;y:190px} 50%{height:65px;y:155px} }
+      @keyframes bar19 { 0%,100%{height:55px;y:165px} 50%{height:10px;y:210px} }
+      @keyframes bar20 { 0%,100%{height:18px;y:202px} 50%{height:90px;y:130px} }
+      @keyframes bar21 { 0%,100%{height:72px;y:148px} 50%{height:28px;y:192px} }
+      @keyframes bar22 { 0%,100%{height:25px;y:195px} 50%{height:82px;y:138px} }
+      @keyframes bar23 { 0%,100%{height:95px;y:125px} 50%{height:22px;y:198px} }
+      @keyframes bar24 { 0%,100%{height:42px;y:178px} 50%{height:58px;y:162px} }
+      @keyframes bar25 { 0%,100%{height:68px;y:152px} 50%{height:15px;y:205px} }
+      @keyframes bar26 { 0%,100%{height:14px;y:206px} 50%{height:100px;y:120px} }
+      @keyframes bar27 { 0%,100%{height:85px;y:135px} 50%{height:32px;y:188px} }
+      @keyframes bar28 { 0%,100%{height:28px;y:192px} 50%{height:70px;y:150px} }
+      @keyframes bar29 { 0%,100%{height:58px;y:162px} 50%{height:18px;y:202px} }
+      @keyframes bar30 { 0%,100%{height:16px;y:204px} 50%{height:85px;y:135px} }
+      @keyframes bar31 { 0%,100%{height:48px;y:172px} 50%{height:40px;y:180px} }
+      @keyframes blink  { 0%,45%{opacity:1} 50%,95%{opacity:0} 100%{opacity:1} }
+      @keyframes scanline { 0%{transform:translateY(-10px)} 100%{transform:translateY(330px)} }
+      @keyframes pulse  { 0%,100%{opacity:0.6} 50%{opacity:1} }
+      .bar { rx:1; fill:#00EEFF; opacity:0.85; }
+      .bar-dim { rx:1; fill:#004455; }
+      .scene-label { font-family:monospace; font-size:9px; fill:#AAFFAA; opacity:0.7; }
+    </style>
+    <linearGradient id="scanGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#00EEFF" stop-opacity="0"/>
+      <stop offset="50%" stop-color="#00EEFF" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#00EEFF" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="vig" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#050810" stop-opacity="0"/>
+      <stop offset="100%" stop-color="#050810" stop-opacity="0.7"/>
+    </radialGradient>
+  </defs>
+
+  <rect width="900" height="320" fill="#050810"/>
+  <line x1="20" y1="90" x2="880" y2="90" stroke="#00EEFF" stroke-opacity="0.08"/>
+  <line x1="20" y1="220" x2="880" y2="220" stroke="#00EEFF" stroke-opacity="0.08"/>
+  <line x1="20" y1="155" x2="880" y2="155" stroke="#00EEFF" stroke-opacity="0.04"/>
+
+  <text x="24" y="30" font-family="monospace" font-size="11" fill="#00EEFF" opacity="0.5">[ STAR AMBIENT STREAM v2.0 ]</text>
+  <text x="24" y="58" font-family="monospace" font-size="22" fill="#00EEFF" font-weight="bold" letter-spacing="3">DEEP SPACE OUTPOST</text>
+  <text x="24" y="76" font-family="monospace" font-size="10" fill="#AAFFAA" opacity="0.8">Procedural Audio Engine  ·  ffmpeg RTMP  ·  YouTube Live 24/7</text>
+
+  <text x="876" y="30" font-family="monospace" font-size="10" fill="#FFDD44" text-anchor="end" style="animation:pulse 2s ease-in-out infinite">● LIVE</text>
+  <text x="876" y="44" font-family="monospace" font-size="9"  fill="#AAFFAA" opacity="0.6" text-anchor="end">Santiago, Chile</text>
+  <text x="876" y="57" font-family="monospace" font-size="9"  fill="#00EEFF" opacity="0.5" text-anchor="end">Star @ Tailscale</text>
+
+  <!-- Shadow bars -->
+  <rect class="bar-dim" x="24"  width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="48"  width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="72"  width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="96"  width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="120" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="144" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="168" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="192" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="216" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="240" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="264" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="288" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="312" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="336" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="360" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="384" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="408" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="432" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="456" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="480" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="504" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="528" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="552" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="576" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="600" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="624" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="648" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="672" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="696" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="720" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="744" width="20" height="130" y="90"/>
+  <rect class="bar-dim" x="768" width="20" height="130" y="90"/>
+
+  <!-- Animated bars -->
+  <rect class="bar" x="24"  width="20" height="12" y="208" style="animation:bar0  2.1s ease-in-out infinite;"/>
+  <rect class="bar" x="48"  width="20" height="30" y="190" style="animation:bar1  1.7s ease-in-out infinite 0.1s;"/>
+  <rect class="bar" x="72"  width="20" height="18" y="202" style="animation:bar2  2.3s ease-in-out infinite 0.2s;"/>
+  <rect class="bar" x="96"  width="20" height="40" y="180" style="animation:bar3  1.9s ease-in-out infinite 0.05s;"/>
+  <rect class="bar" x="120" width="20" height="10" y="210" style="animation:bar4  2.5s ease-in-out infinite 0.3s;"/>
+  <rect class="bar" x="144" width="20" height="60" y="160" style="animation:bar5  1.8s ease-in-out infinite 0.15s;"/>
+  <rect class="bar" x="168" width="20" height="90" y="130" style="animation:bar6  2.2s ease-in-out infinite 0.4s;"/>
+  <rect class="bar" x="192" width="20" height="20" y="200" style="animation:bar7  1.6s ease-in-out infinite 0.25s;"/>
+  <rect class="bar" x="216" width="20" height="45" y="175" style="animation:bar8  2.0s ease-in-out infinite 0.1s;"/>
+  <rect class="bar" x="240" width="20" height="70" y="150" style="animation:bar9  2.4s ease-in-out infinite 0.35s;"/>
+  <rect class="bar" x="264" width="20" height="35" y="185" style="animation:bar10 1.75s ease-in-out infinite 0.2s;"/>
+  <rect class="bar" x="288" width="20" height="15" y="205" style="animation:bar11 2.15s ease-in-out infinite 0.45s;"/>
+  <rect class="bar" x="312" width="20" height="50" y="170" style="animation:bar12 1.95s ease-in-out infinite 0.0s;"/>
+  <rect class="bar" x="336" width="20" height="80" y="140" style="animation:bar13 2.35s ease-in-out infinite 0.3s;"/>
+  <rect class="bar" x="360" width="20" height="22" y="198" style="animation:bar14 1.85s ease-in-out infinite 0.12s;"/>
+  <rect class="bar" x="384" width="20" height="65" y="155" style="animation:bar15 2.05s ease-in-out infinite 0.42s;"/>
+  <rect class="bar" x="408" width="20" height="12" y="208" style="animation:bar16 2.28s ease-in-out infinite 0.08s;"/>
+  <rect class="bar" x="432" width="20" height="88" y="132" style="animation:bar17 1.65s ease-in-out infinite 0.22s;"/>
+  <rect class="bar" x="456" width="20" height="30" y="190" style="animation:bar18 2.18s ease-in-out infinite 0.38s;"/>
+  <rect class="bar" x="480" width="20" height="55" y="165" style="animation:bar19 1.92s ease-in-out infinite 0.48s;"/>
+  <rect class="bar" x="504" width="20" height="18" y="202" style="animation:bar20 2.42s ease-in-out infinite 0.06s;"/>
+  <rect class="bar" x="528" width="20" height="72" y="148" style="animation:bar21 1.78s ease-in-out infinite 0.28s;"/>
+  <rect class="bar" x="552" width="20" height="25" y="195" style="animation:bar22 2.08s ease-in-out infinite 0.18s;"/>
+  <rect class="bar" x="576" width="20" height="95" y="125" style="animation:bar23 1.68s ease-in-out infinite 0.44s;"/>
+  <rect class="bar" x="600" width="20" height="42" y="178" style="animation:bar24 2.32s ease-in-out infinite 0.02s;"/>
+  <rect class="bar" x="624" width="20" height="68" y="152" style="animation:bar25 1.88s ease-in-out infinite 0.32s;"/>
+  <rect class="bar" x="648" width="20" height="14" y="206" style="animation:bar26 2.22s ease-in-out infinite 0.14s;"/>
+  <rect class="bar" x="672" width="20" height="85" y="135" style="animation:bar27 1.72s ease-in-out infinite 0.26s;"/>
+  <rect class="bar" x="696" width="20" height="28" y="192" style="animation:bar28 2.12s ease-in-out infinite 0.36s;"/>
+  <rect class="bar" x="720" width="20" height="58" y="162" style="animation:bar29 1.82s ease-in-out infinite 0.46s;"/>
+  <rect class="bar" x="744" width="20" height="16" y="204" style="animation:bar30 2.38s ease-in-out infinite 0.04s;"/>
+  <rect class="bar" x="768" width="20" height="48" y="172" style="animation:bar31 2.02s ease-in-out infinite 0.24s;"/>
+
+  <rect x="20" y="88" width="772" height="3" fill="url(#scanGrad)" opacity="0.5"/>
+
+  <text class="scene-label" x="24"  y="238">55Hz</text>
+  <text class="scene-label" x="120" y="238">200</text>
+  <text class="scene-label" x="264" y="238">500</text>
+  <text class="scene-label" x="408" y="238">1k</text>
+  <text class="scene-label" x="552" y="238">2k</text>
+  <text class="scene-label" x="696" y="238">5k</text>
+  <text class="scene-label" x="770" y="238">8k</text>
+
+  <rect x="20"  y="252" width="118" height="18" rx="2" fill="#001820" stroke="#00EEFF" stroke-width="0.5" stroke-opacity="0.5"/>
+  <rect x="146" y="252" width="118" height="18" rx="2" fill="#001820" stroke="#00EEFF" stroke-width="0.5" stroke-opacity="0.3"/>
+  <rect x="272" y="252" width="118" height="18" rx="2" fill="#001820" stroke="#00EEFF" stroke-width="0.5" stroke-opacity="0.3"/>
+  <rect x="398" y="252" width="118" height="18" rx="2" fill="#001820" stroke="#00EEFF" stroke-width="0.5" stroke-opacity="0.3"/>
+  <rect x="524" y="252" width="118" height="18" rx="2" fill="#001820" stroke="#00EEFF" stroke-width="0.5" stroke-opacity="0.3"/>
+  <rect x="650" y="252" width="118" height="18" rx="2" fill="#001820" stroke="#00EEFF" stroke-width="0.5" stroke-opacity="0.3"/>
+
+  <text x="79"  y="264" font-family="monospace" font-size="9" fill="#00EEFF" text-anchor="middle" style="animation:pulse 2.1s ease-in-out infinite">&#x1F6F8; ORBITAL STATION</text>
+  <text x="205" y="264" font-family="monospace" font-size="9" fill="#AAFFAA" text-anchor="middle" opacity="0.7">&#x2744; ARCTIC OUTPOST</text>
+  <text x="331" y="264" font-family="monospace" font-size="9" fill="#AAFFAA" text-anchor="middle" opacity="0.7">&#x1F33F; FOREST STATION</text>
+  <text x="457" y="264" font-family="monospace" font-size="9" fill="#AAFFAA" text-anchor="middle" opacity="0.7">&#x1F30A; DEEP SEA BASE</text>
+  <text x="583" y="264" font-family="monospace" font-size="9" fill="#AAFFAA" text-anchor="middle" opacity="0.7">&#x26F0; MOUNTAIN BASE</text>
+  <text x="709" y="264" font-family="monospace" font-size="9" fill="#AAFFAA" text-anchor="middle" opacity="0.7">&#x2600; DESERT HEAT</text>
+
+  <line x1="20" y1="282" x2="880" y2="282" stroke="#00EEFF" stroke-opacity="0.12"/>
+  <text x="24"  y="298" font-family="monospace" font-size="9" fill="#00EEFF" opacity="0.6">[ STAR ]  Santiago, Chile  //</text>
+  <text x="195" y="298" font-family="monospace" font-size="9" fill="#FFDD44" style="animation:blink 1s step-end infinite">22:47:03</text>
+  <text x="255" y="298" font-family="monospace" font-size="9" fill="#00EEFF" opacity="0.6">//  Lun 16 Jun 2026</text>
+  <text x="490" y="298" font-family="monospace" font-size="9" fill="#AAFFAA" opacity="0.7">CPU:2.1  RAM:23pct  Disp:12  Viewers:1</text>
+  <text x="876" y="298" font-family="monospace" font-size="9" fill="#FFDD44" text-anchor="end" style="animation:blink 1.4s step-end infinite">&#x2588;</text>
+
+  <rect width="900" height="320" fill="url(#vig)"/>
+  <rect x="0" y="-10" width="900" height="20" fill="url(#scanGrad)" opacity="0.3" style="animation:scanline 4s linear infinite"/>
+</svg>
