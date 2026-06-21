@@ -34,6 +34,8 @@ SCENE_FILES = {
     'scp_contencion':'/app/scenes/scp_contencion_2h.mp4',
 }
 SCENE_DURATION  = 45 * 60        # 45 minutos por escena (14 escenas × 45min = 10.5h)
+# 11.5h: justo bajo el límite de 12h de VOD de YouTube → cada episodio se archiva
+# completo. La rotación de episodios depende de la quota API (ver fix en chat_listener).
 CYCLE_DURATION  = 11.5 * 3600    # duracion total del episodio
 
 TOKEN_PICKLE  = "token.pickle"
@@ -429,7 +431,9 @@ def run_episode(youtube, episode):
                 current_scene = SCENE_ORDER[scene_idx]
                 print(f"[INFO] Rotando escena -> {current_scene}", flush=True)
                 write_scene(current_scene)
-                update_broadcast_metadata(youtube, broadcast_id, episode, current_scene, scheduled_start)
+                # No actualizamos metadata del broadcast en cada rotación automática:
+                # ahorra ~50 unidades de quota cada 45min. El título solo refleja la
+                # escena inicial del episodio; el HUD del video ya muestra la escena actual.
                 kill_procs(ffmpeg_proc, audio_proc)
                 time.sleep(2)
                 audio_proc, ffmpeg_proc = start_ffmpeg_audio(

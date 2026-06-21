@@ -54,7 +54,10 @@ SCENE_LABELS_ES = {
     'scp_contencion':'SCP Contención ⛓️',
 }
 
-POLL_INTERVAL = 8   # segundos entre polls
+# Polling subido de 8s a 90s: a 8s consumía ~54k unidades/día de quota
+# (límite 10k/día) y bloqueaba create_broadcast → el ciclo de episodios moría.
+# A 90s son ~4.8k unidades/día, dejando margen para gestionar broadcasts.
+POLL_INTERVAL = 90  # segundos entre polls
 MAX_RESULTS   = 50
 
 
