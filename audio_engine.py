@@ -1054,6 +1054,7 @@ from generators.gen_nature import NatureGeneratorsMixin
 from generators.gen_submarine import SubmarineGeneratorsMixin
 from generators.gen_industrial import IndustrialGeneratorsMixin
 from generators.gen_urban import UrbanGeneratorsMixin
+from generators.gen_diffusion import MonoDiffuser
 
 class AmbientSounds(BaseGeneratorsMixin, SpaceGeneratorsMixin, PolarGeneratorsMixin, NatureGeneratorsMixin, SubmarineGeneratorsMixin, IndustrialGeneratorsMixin, UrbanGeneratorsMixin):
     # Fonemas para síntesis de voz del walkie-talkie
@@ -1711,6 +1712,7 @@ def main():
     board = None
     chunk_count = 0
     master_gain = 1.0
+    diffuser = MonoDiffuser(sr=SR, rt60=2.6, mix=0.22, damp=0.5)  # cola difusa estilo Bitwig
     _stage = "init"   # rastrea dónde estamos si algo explota
 
     # Cargar valores iniciales síncronamente antes de arrancar los hilos
@@ -1782,6 +1784,9 @@ def main():
                 audio_f32 = np.clip(audio.astype(np.float32), -1.0, 1.0).reshape(1, -1)
                 processed = board(audio_f32, SR)
                 audio = np.nan_to_num(processed.flatten().astype(np.float64), nan=0.0)
+
+            _stage = "diffusion"
+            audio = diffuser.process(audio)   # cola difusa (a prueba de fallos: devuelve seco si algo falla)
 
             _stage = "master_bus"
             # Ganancia adaptativa RMS calibrada para un volumen de transmisión óptimo
