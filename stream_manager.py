@@ -44,7 +44,7 @@ FONT          = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 HUD1          = "/tmp/star_hud1.txt"
 HUD2          = "/tmp/star_hud2.txt"
 HUD3          = "/tmp/star_hud3.txt"
-LOGO_FILE     = "/app/logo_jackstar.png"
+LOGO_FILE     = "/app/logo.png"
 COMMAND_FILE  = "/tmp/star_chat_cmd.txt"   # escrito por chat_listener.py
 
 # Ruta estable para persistir episodio (sobrevive reboots)
