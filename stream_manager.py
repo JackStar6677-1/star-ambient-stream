@@ -45,6 +45,7 @@ HUD1          = "/tmp/star_hud1.txt"
 HUD2          = "/tmp/star_hud2.txt"
 HUD3          = "/tmp/star_hud3.txt"
 LOGO_FILE     = "/app/logo.png"
+LOGO_FILE2    = "/app/logo_kika_circle.png"
 COMMAND_FILE  = "/tmp/star_chat_cmd.txt"   # escrito por chat_listener.py
 
 # Ruta estable para persistir episodio (sobrevive reboots)
@@ -206,7 +207,14 @@ def start_ffmpeg_audio(video_path, _ingestion_url=None, _stream_name=None):
         build_drawtext(HUD2, "h-60", fontsize=18, color='0xAAFFAA'),
         build_drawtext(HUD3, "h-32", fontsize=17, color='0xFFDD44'),
     ])
-    filter_complex = f"[0:v]{vf}[base];[2:v]scale=220:-1[logo];[base][logo]overlay=18:18[v]"
+    # Dos logos circulares top-left: jackstar (idx 2) + kika (idx 3), 110px, 8px gap
+    filter_complex = (
+        f"[0:v]{vf}[base];"
+        f"[2:v]scale=110:-1[l1];"
+        f"[3:v]scale=110:-1[l2];"
+        f"[base][l1]overlay=15:15[b2];"
+        f"[b2][l2]overlay=133:15[v]"
+    )
 
     audio_proc = subprocess.Popen(
         ['python', '-u', AUDIO_ENGINE],
@@ -217,13 +225,11 @@ def start_ffmpeg_audio(video_path, _ingestion_url=None, _stream_name=None):
     ffmpeg_proc = subprocess.Popen(
         [
             'ffmpeg', '-hide_banner', '-nostdin', '-loglevel', 'warning',
-            # Video input
             '-re', '-stream_loop', '-1', '-fflags', '+genpts', '-i', video_path,
-            # Audio input desde pipe del supervisor
             '-thread_queue_size', '4096',
             '-f', 's16le', '-ar', '44100', '-ac', '1', '-i', 'pipe:0',
-            # Logo transparente para tapar watermark del video fuente
             '-loop', '1', '-i', LOGO_FILE,
+            '-loop', '1', '-i', LOGO_FILE2,
             '-filter_complex', filter_complex,
             '-map', '[v]', '-map', '1:a',
             # Video encoding
