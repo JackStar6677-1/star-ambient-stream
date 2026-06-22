@@ -44,7 +44,7 @@ FONT          = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 HUD1          = "/tmp/star_hud1.txt"
 HUD2          = "/tmp/star_hud2.txt"
 HUD3          = "/tmp/star_hud3.txt"
-LOGO_FILE     = "/app/logo.png"
+LOGO_FILE     = "/app/logo_jackstar.png"
 COMMAND_FILE  = "/tmp/star_chat_cmd.txt"   # escrito por chat_listener.py
 
 # Ruta estable para persistir episodio (sobrevive reboots)
@@ -206,7 +206,7 @@ def start_ffmpeg_audio(video_path, _ingestion_url=None, _stream_name=None):
         build_drawtext(HUD2, "h-60", fontsize=18, color='0xAAFFAA'),
         build_drawtext(HUD3, "h-32", fontsize=17, color='0xFFDD44'),
     ])
-    filter_complex = f"[0:v]{vf}[base];[base][2:v]overlay=W-w-15:H-h-15[v]"
+    filter_complex = f"[0:v]{vf}[base];[2:v]scale=220:-1[logo];[base][logo]overlay=18:18[v]"
 
     audio_proc = subprocess.Popen(
         ['python', '-u', AUDIO_ENGINE],
