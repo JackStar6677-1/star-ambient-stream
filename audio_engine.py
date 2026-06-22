@@ -480,17 +480,10 @@ def fetch_scene():
 
 
 def day_phase(hour):
-    """Multiplicadores de brightness/density/energy según hora del día.
-    Noche (19:00 a 06:00): calmado, súper suave, ambiente flotante.
-    Mañana (06:00 a 10:00): transición gradual.
-    Día (10:00 a 19:00): activo y brillante.
-    """
-    if 19 <= hour or hour < 6:
-        return 0.10, 0.05, 0.10
-    elif 6 <= hour < 10:
-        return 0.40, 0.35, 0.35
-    else:
-        return 0.82, 0.85, 0.78
+    if 22 <= hour or hour < 5:  return 0.28, 0.24, 0.26
+    elif 5  <= hour < 8:        return 0.50, 0.42, 0.44
+    elif 8  <= hour < 18:       return 0.82, 0.85, 0.78
+    else:                       return 0.55, 0.52, 0.50
 
 
 def biquad_bandpass(fc, Q, sr=44100):
@@ -584,9 +577,9 @@ class AudioState:
         hum_factor  = (self.humidity - 50.0) / 100.0 * 0.08     # -0.04 a +0.04 aprox
         wind_factor = (self.wind_spd / 30.0) * 0.25             # 0 a 0.25+
 
-        self.t_brightness = float(np.clip(b + temp_factor - load_pen * 0.1, 0.05, 1.0))
-        self.t_density    = float(np.clip(d + device_bonus + viewer_bonus - load_pen * 0.15, 0.05, 1.0))
-        self.t_energy     = float(np.clip(e + wind_factor - load_pen * 0.1, 0.05, 1.0))
+        self.t_brightness = float(np.clip(b + temp_factor - load_pen * 0.1, 0.22, 1.0))
+        self.t_density    = float(np.clip(d + device_bonus + viewer_bonus - load_pen * 0.15, 0.20, 1.0))
+        self.t_energy     = float(np.clip(e + wind_factor - load_pen * 0.1, 0.20, 1.0))
         self.t_sub        = prof['sub_base'] * (1.0 + self.t_energy * 0.5)
         self.rain_intensity = weather_rain_intensity(self.w_code)
         
