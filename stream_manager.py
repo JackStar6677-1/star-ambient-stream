@@ -44,8 +44,9 @@ FONT          = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf"
 HUD1          = "/tmp/star_hud1.txt"
 HUD2          = "/tmp/star_hud2.txt"
 HUD3          = "/tmp/star_hud3.txt"
-LOGO_FILE     = "/app/logo.png"
-LOGO_FILE2    = "/app/logo_kika_circle.png"
+LOGO_FILE     = "/app/logo_jackstar_circle.png"   # Jackstar — top-left
+LOGO_FILE2    = "/app/logo_kika_circle.png"        # Kika — top-left junto a jackstar
+LOGO_FILE3    = "/app/logo_king.png"               # Rey — bottom-right original
 COMMAND_FILE  = "/tmp/star_chat_cmd.txt"   # escrito por chat_listener.py
 
 # Ruta estable para persistir episodio (sobrevive reboots)
@@ -207,13 +208,14 @@ def start_ffmpeg_audio(video_path, _ingestion_url=None, _stream_name=None):
         build_drawtext(HUD2, "h-60", fontsize=18, color='0xAAFFAA'),
         build_drawtext(HUD3, "h-32", fontsize=17, color='0xFFDD44'),
     ])
-    # Dos logos circulares top-left: jackstar (idx 2) + kika (idx 3), 110px, 8px gap
+    # Jackstar + Kika top-left (110px), Rey bottom-right original
     filter_complex = (
         f"[0:v]{vf}[base];"
         f"[2:v]scale=110:-1[l1];"
         f"[3:v]scale=110:-1[l2];"
         f"[base][l1]overlay=15:15[b2];"
-        f"[b2][l2]overlay=133:15[v]"
+        f"[b2][l2]overlay=133:15[b3];"
+        f"[b3][4:v]overlay=W-w-15:H-h-15[v]"
     )
 
     audio_proc = subprocess.Popen(
@@ -230,6 +232,7 @@ def start_ffmpeg_audio(video_path, _ingestion_url=None, _stream_name=None):
             '-f', 's16le', '-ar', '44100', '-ac', '1', '-i', 'pipe:0',
             '-loop', '1', '-i', LOGO_FILE,
             '-loop', '1', '-i', LOGO_FILE2,
+            '-loop', '1', '-i', LOGO_FILE3,
             '-filter_complex', filter_complex,
             '-map', '[v]', '-map', '1:a',
             # Video encoding
