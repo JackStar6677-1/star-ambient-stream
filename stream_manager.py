@@ -2,18 +2,17 @@
 """
 stream_manager.py — Orchestrador del stream 24/7 con rotación de escenas.
 
-Ciclo de un episodio: 11.5h → pausa 90s → siguiente episodio.
-Dentro de cada episodio, las escenas rotan cada SCENE_DURATION segundos.
-Al rotar escena: ffmpeg + audio_engine se reinician con el nuevo video.
-La escena activa se publica en /tmp/star_scene.txt para audio_engine.
+Arquitectura: RTMP key fija desde YouTube Studio — sin API, sin quota.
+Ciclo: 11h por episodio → 60s pausa → nuevo episodio (YouTube crea VOD nuevo).
+Escenas rotan cada SCENE_DURATION segundos dentro del episodio.
 """
 
-import os, sys, time, pickle, subprocess, threading, json
-from googleapiclient.discovery import build
-from google.auth.transport.requests import Request
-from googleapiclient.errors import HttpError
+import os, sys, time, subprocess, threading, json
 
 import hud_updater
+
+RTMP_KEY       = "yfh2-rb5k-10b6-akw7-9thu"
+RTMP_URL       = f"rtmp://a.rtmp.youtube.com/live2/{RTMP_KEY}"
 
 # ── Escenas: orden y duración ──────────────────────────────
 SCENE_ORDER = ['electrica', 'montana', 'orbital', 'nieve', 'bosque', 'submarina', 'desierto', 'volcanica', 'reactor', 'tormenta', 'array_suiza', 'latam_noche', 'scp_exterior', 'scp_contencion']
@@ -33,12 +32,10 @@ SCENE_FILES = {
     'scp_exterior':  '/app/scenes/scp_exterior_2h.mp4',
     'scp_contencion':'/app/scenes/scp_contencion_2h.mp4',
 }
-SCENE_DURATION  = 45 * 60        # 45 minutos por escena (14 escenas × 45min = 10.5h)
-# 11.5h: justo bajo el límite de 12h de VOD de YouTube → cada episodio se archiva
-# completo. La rotación de episodios depende de la quota API (ver fix en chat_listener).
-CYCLE_DURATION  = 11.5 * 3600    # duracion total del episodio
+SCENE_DURATION  = 45 * 60        # 45 minutos por escena
+CYCLE_DURATION  = 11 * 3600      # 11h → corte limpio del episodio
+EPISODE_PAUSE   = 60             # 60s fuera del aire → YouTube crea nuevo VOD
 
-TOKEN_PICKLE  = "token.pickle"
 AUDIO_ENGINE  = "audio_supervisor.py"
 VIEWERS_FILE  = "/tmp/star_viewers.txt"
 SCENE_FILE    = "/tmp/star_scene.txt"
@@ -126,27 +123,6 @@ def make_description(scene):
     return f"▶️ Escena actual: {scene_desc}\n\n" + _BASE_DESC
 
 
-def update_broadcast_metadata(youtube, broadcast_id, episode, scene, scheduled_start):
-    """Actualiza titulo y descripcion del broadcast en YouTube."""
-    try:
-        new_title = make_title(episode, scene)
-        new_desc  = make_description(scene)
-        youtube.liveBroadcasts().update(
-            part='snippet',
-            body={
-                'id': broadcast_id,
-                'snippet': {
-                    'title': new_title,
-                    'description': new_desc,
-                    'scheduledStartTime': scheduled_start,
-                },
-            }
-        ).execute()
-        print(f"[INFO] Titulo actualizado -> {new_title}", flush=True)
-    except Exception as e:
-        print(f"[WARN] No se pudo actualizar titulo: {e}", flush=True)
-
-
 def load_episode():
     try:
         return json.load(open(EPISODE_FILE))['episode']
@@ -158,69 +134,6 @@ def save_episode(n):
         json.dump({'episode': n}, open(EPISODE_FILE, 'w'))
     except Exception:
         pass
-
-
-def get_youtube_client():
-    creds = None
-    if os.path.exists(TOKEN_PICKLE):
-        with open(TOKEN_PICKLE, 'rb') as f:
-            creds = pickle.load(f)
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            print("[INFO] Renovando credenciales...")
-            creds.refresh(Request())
-            with open(TOKEN_PICKLE, 'wb') as f:
-                pickle.dump(creds, f)
-        else:
-            print("[ERROR] Credenciales invalidas.")
-            sys.exit(1)
-    return build('youtube', 'v3', credentials=creds)
-
-
-def create_broadcast(youtube, title, description):
-    print(f"[INFO] Creando broadcast: '{title}'")
-    scheduled_start = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 120))
-    body = {
-        'snippet': {
-            'title': title, 'description': description,
-            'scheduledStartTime': scheduled_start,
-        },
-        'status': {'privacyStatus': 'public', 'selfDeclaredCreativeCommons': False},
-        'contentDetails': {
-            'enableAutoStart': True, 'enableAutoStop': True,
-            'monitorStream': {'enableMonitorStream': False},
-        },
-    }
-    broadcast_id = youtube.liveBroadcasts().insert(part='snippet,status,contentDetails', body=body).execute()['id']
-    return broadcast_id, scheduled_start
-
-
-def create_stream(youtube, title):
-    print("[INFO] Creando live stream...")
-    body = {
-        'snippet': {'title': f"{title} -- Stream"},
-        'cdn': {'frameRate': '30fps', 'ingestionType': 'rtmp', 'resolution': '720p'},
-    }
-    resp = youtube.liveStreams().insert(part='snippet,cdn', body=body).execute()
-    return resp['id'], resp['cdn']['ingestionInfo']['streamName'], resp['cdn']['ingestionInfo']['ingestionAddress']
-
-
-def bind_broadcast(youtube, broadcast_id, stream_id):
-    youtube.liveBroadcasts().bind(id=broadcast_id, part='id,contentDetails', streamId=stream_id).execute()
-
-
-def poll_viewers(youtube, broadcast_id, stop_event):
-    while not stop_event.is_set():
-        try:
-            resp  = youtube.liveBroadcasts().list(part='statistics', id=broadcast_id).execute()
-            items = resp.get('items', [])
-            if items:
-                viewers = int(items[0].get('statistics', {}).get('concurrentViewers', 0))
-                with open(VIEWERS_FILE, 'w') as f:
-                    f.write(str(viewers))
-        except Exception as e:
-            print(f"[WARN] Viewers: {e}", file=sys.stderr)
-        stop_event.wait(60)
 
 
 def build_drawtext(textfile, y_expr, fontsize, color='white', alpha='0.85'):
@@ -279,10 +192,9 @@ def write_crash_count(count):
         pass
 
 
-def start_ffmpeg_audio(video_path, ingestion_url, stream_name):
-    """Lanza audio_engine + ffmpeg. Devuelve (audio_proc, ffmpeg_proc)."""
-    rtmp = f"{ingestion_url}/{stream_name}"
-    print(f"[INFO] Iniciando ffmpeg -> {ingestion_url} | video={video_path}", flush=True)
+def start_ffmpeg_audio(video_path, _ingestion_url=None, _stream_name=None):
+    """Lanza audio_engine + ffmpeg hacia RTMP_URL fija."""
+    print(f"[INFO] Iniciando ffmpeg → {RTMP_URL} | video={video_path}", flush=True)
 
     for f in (HUD1, HUD2, HUD3):
         if not os.path.exists(f):
@@ -340,7 +252,7 @@ def start_ffmpeg_audio(video_path, ingestion_url, stream_name):
             '-reconnect_streamed', '1',
             '-reconnect_delay_max', '15',
             '-f', 'flv',
-            rtmp,
+            RTMP_URL,
         ],
         stdin=audio_proc.stdout,
         stderr=sys.stderr,
@@ -361,89 +273,56 @@ def kill_procs(*procs):
                 pass
 
 
-def run_episode(youtube, episode):
-    _init_scene = SCENE_ORDER[0]
-    title       = make_title(episode, _init_scene)
-    description = make_description(_init_scene)
-
-    broadcast_id, scheduled_start = create_broadcast(youtube, title, description)
-    stream_id, stream_name, ingestion_url = create_stream(youtube, title)
-    bind_broadcast(youtube, broadcast_id, stream_id)
-    print(f"[INFO] Broadcast ID: {broadcast_id}", flush=True)
-
-    hud_updater.start(youtube=youtube, broadcast_id=broadcast_id)
-
-    stop_viewers = threading.Event()
-    viewers_thread = threading.Thread(
-        target=poll_viewers, args=(youtube, broadcast_id, stop_viewers), daemon=True
-    )
-    viewers_thread.start()
-
-    episode_start  = time.time()
-    scene_idx      = 0
-    scene_start    = time.time()
-    current_scene  = SCENE_ORDER[scene_idx % len(SCENE_ORDER)]
-    crash_count    = 0
+def run_episode(episode, scene_idx_start=0):
+    """Corre un episodio. Retorna el índice de escena para el siguiente."""
+    scene_idx     = scene_idx_start
+    scene_start   = time.time()
+    episode_start = time.time()
+    current_scene = SCENE_ORDER[scene_idx % len(SCENE_ORDER)]
+    crash_count   = 0
 
     write_scene(current_scene)
     write_crash_count(crash_count)
-    # update_broadcast_metadata(youtube, broadcast_id, episode, current_scene, scheduled_start) # Redundant at startup, prevents API timeouts
-    print(f"[INFO] Escena inicial: {current_scene}", flush=True)
-    audio_proc, ffmpeg_proc = start_ffmpeg_audio(
-        SCENE_FILES[current_scene], ingestion_url, stream_name
-    )
+    print(f"[INFO] --- Episodio {episode} | Escena: {current_scene} | {CYCLE_DURATION//3600}h ---", flush=True)
+
+    audio_proc, ffmpeg_proc = start_ffmpeg_audio(SCENE_FILES[current_scene])
 
     try:
         while time.time() - episode_start < CYCLE_DURATION:
             now = time.time()
 
-            # ── Comando de chat (cambia / escena X / reinicia) ──
             chat_cmd, chat_val = read_chat_command()
             if chat_cmd == 'goto' and chat_val in SCENE_FILES:
-                new_scene = chat_val
-                if new_scene != current_scene:
-                    scene_idx = SCENE_ORDER.index(new_scene) if new_scene in SCENE_ORDER else scene_idx
-                    current_scene = new_scene
-                    print(f"[CHAT] Saltando a escena -> {current_scene}", flush=True)
+                if chat_val != current_scene:
+                    scene_idx     = SCENE_ORDER.index(chat_val) if chat_val in SCENE_ORDER else scene_idx
+                    current_scene = chat_val
+                    print(f"[CHAT] Saltando a escena → {current_scene}", flush=True)
                     write_scene(current_scene)
-                    update_broadcast_metadata(youtube, broadcast_id, episode, current_scene, scheduled_start)
                     kill_procs(ffmpeg_proc, audio_proc)
                     time.sleep(2)
-                    audio_proc, ffmpeg_proc = start_ffmpeg_audio(
-                        SCENE_FILES[current_scene], ingestion_url, stream_name
-                    )
+                    audio_proc, ffmpeg_proc = start_ffmpeg_audio(SCENE_FILES[current_scene])
                     scene_start = now
                     crash_count = 0
                     write_crash_count(crash_count)
 
             elif chat_cmd == 'reinicia':
-                # Reinicia el pipeline de video sin cambiar escena (fix lag/cortes)
-                print("[CHAT] Reiniciando ffmpeg por comando de chat...", flush=True)
+                print("[CHAT] Reiniciando ffmpeg...", flush=True)
                 kill_procs(ffmpeg_proc, audio_proc)
                 time.sleep(2)
-                audio_proc, ffmpeg_proc = start_ffmpeg_audio(
-                    SCENE_FILES[current_scene], ingestion_url, stream_name
-                )
+                audio_proc, ffmpeg_proc = start_ffmpeg_audio(SCENE_FILES[current_scene])
 
-            # ── Rotacion automatica de escena ──
             elif now - scene_start >= SCENE_DURATION:
                 scene_idx     = (scene_idx + 1) % len(SCENE_ORDER)
                 current_scene = SCENE_ORDER[scene_idx]
-                print(f"[INFO] Rotando escena -> {current_scene}", flush=True)
+                print(f"[INFO] Rotando escena → {current_scene}", flush=True)
                 write_scene(current_scene)
-                # No actualizamos metadata del broadcast en cada rotación automática:
-                # ahorra ~50 unidades de quota cada 45min. El título solo refleja la
-                # escena inicial del episodio; el HUD del video ya muestra la escena actual.
                 kill_procs(ffmpeg_proc, audio_proc)
                 time.sleep(2)
-                audio_proc, ffmpeg_proc = start_ffmpeg_audio(
-                    SCENE_FILES[current_scene], ingestion_url, stream_name
-                )
+                audio_proc, ffmpeg_proc = start_ffmpeg_audio(SCENE_FILES[current_scene])
                 scene_start = now
                 crash_count = 0
                 write_crash_count(crash_count)
 
-            # ── Monitoreo de procesos ──
             ffmpeg_ret = ffmpeg_proc.poll()
             audio_ret  = audio_proc.poll()
             if ffmpeg_ret is not None or audio_ret is not None:
@@ -451,39 +330,34 @@ def run_episode(youtube, episode):
                 backoff = _CRASH_BACKOFF[min(crash_count, len(_CRASH_BACKOFF) - 1)]
                 crash_count += 1
                 write_crash_count(crash_count)
-                print(f"[WARN] {reason} termino (crash #{crash_count}) con codigos (ffmpeg:{ffmpeg_ret}, audio:{audio_ret}). Backoff {backoff}s...", flush=True)
+                print(f"[WARN] {reason} cayó (crash #{crash_count}), backoff {backoff}s...", flush=True)
                 kill_procs(ffmpeg_proc, audio_proc)
                 time.sleep(backoff)
-                audio_proc, ffmpeg_proc = start_ffmpeg_audio(
-                    SCENE_FILES[current_scene], ingestion_url, stream_name
-                )
+                audio_proc, ffmpeg_proc = start_ffmpeg_audio(SCENE_FILES[current_scene])
 
-            time.sleep(2)  # polling cada 2s
+            time.sleep(2)
 
     except KeyboardInterrupt:
-        print("[INFO] Interrupcion manual.")
+        print("[INFO] Interrupcion manual.", flush=True)
     finally:
-        stop_viewers.set()
         kill_procs(ffmpeg_proc, audio_proc)
+
+    print(f"[INFO] Episodio {episode} completado.", flush=True)
+    return (scene_idx + 1) % len(SCENE_ORDER)
 
 
 def main():
-    youtube = get_youtube_client()
-    episode = load_episode()
+    hud_updater.start(youtube=None, broadcast_id=None)
+
+    episode   = load_episode()
+    scene_idx = 0
+
     while True:
-        try:
-            print(f"\n[INFO] --- Episodio {episode} ---", flush=True)
-            run_episode(youtube, episode)
-            episode += 1
-            save_episode(episode)
-            print("[INFO] Pausa 90s...", flush=True)
-            time.sleep(90)
-        except HttpError as e:
-            print(f"[ERROR] YouTube API: {e}")
-            time.sleep(300)
-        except Exception as e:
-            print(f"[ERROR] {e}")
-            time.sleep(300)
+        scene_idx = run_episode(episode, scene_idx)
+        episode  += 1
+        save_episode(episode)
+        print(f"[INFO] Pausa {EPISODE_PAUSE}s antes de EP {episode}...", flush=True)
+        time.sleep(EPISODE_PAUSE)
 
 
 if __name__ == "__main__":
