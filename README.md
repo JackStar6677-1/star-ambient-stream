@@ -18,7 +18,7 @@ Transmite a YouTube Live desde un servidor Linux con Docker — sin loops, sin s
 
 Un sistema de streaming ambiental completamente automatizado inspirado en proyectos como [SCP: Research Center Ambient](https://www.youtube.com/watch?v=lpAK3fosNIE) — esa sensación de estar dentro de una instalación viva, con sonidos de lluvia, ventiladores, pasos distantes, radio walkie-talkie y drones electrónicos que nunca se repiten.
 
-La diferencia: **todo el audio se genera con código Python en tiempo real**. No hay archivos WAV de fondo. No hay loops. Cada segundo que escuchas es un chunk PCM recién sintetizado con `numpy`, `scipy` y `pedalboard` (Spotify).
+La diferencia: **todo el audio se genera con código Python en tiempo real**. No hay files WAV de fondo. No hay loops. Cada segundo que escuchas es un chunk PCM recién sintetizado con `numpy`, `scipy` y `pedalboard` (Spotify).
 
 ## Features
 
