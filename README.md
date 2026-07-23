@@ -20,7 +20,7 @@ Un sistema de streaming ambiental completamente automatizado inspirado en proyec
 
 La diferencia: **todo el audio se genera con código Python en tiempo real**. No hay archivos WAV de fondo. No hay loops. Cada segundo que escuchas es un chunk PCM recién sintetizado con `numpy`, `scipy` y `pedalboard` (Spotify).
 
-## Características
+## Features
 
 - **6 escenas de video** rotando cada 2 horas con perfiles de audio radicalmente distintos
 - **Audio 100% procedural** — síntesis de acordes, drones, melodías, viento, lluvia, agua, pasos, radio, ventiladores, golpes de puerta
@@ -154,7 +154,7 @@ Para el conteo de dispositivos en red, el contenedor necesita acceso a:
 ```
 Agrégalo como volumen en `docker-compose.yml`.
 
-## Configuración
+## Configuration
 
 `stream_manager.py`:
 ```python
@@ -184,7 +184,7 @@ SCENE_ORDER     = ['orbital', 'nieve', 'bosque', 'submarina', 'montana', 'desier
 - [pedalboard (Spotify)](https://github.com/spotify/pedalboard) — efectos de audio profesionales en Python
 - [Open-Meteo](https://open-meteo.com) — API de clima gratuita sin key
 
-## Licencia
+## License
 
 MIT — úsalo, fórkéalo, mejóralo.
 
