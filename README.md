@@ -187,3 +187,5 @@ SCENE_ORDER     = ['orbital', 'nieve', 'bosque', 'submarina', 'montana', 'desier
 ## Licencia
 
 MIT — úsalo, fórkéalo, mejóralo.
+
+<!-- Updated for 2026 active baseline maintenance -->
