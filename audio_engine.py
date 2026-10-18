@@ -1,1838 +1,964 @@
 #!/usr/bin/env python3
 """
-audio_engine.py — Generador de audio ambiental para stream 24/7.
-
-Escena activa: /tmp/star_scene.txt (orbital|nieve|bosque|submarina|montana|desierto)
-Cada escena tiene un perfil de audio radicalmente distinto.
+audio_engine.py — Motor Autónomo de Streaming Lo-Fi con Alta Variación Rítmica, Armónica y Sonora.
+Versión 4:
+  - 6 Grooves rítmicos distintos por tema:
+      * ambient_pure: sin batería, pura contemplación acústica/analógica.
+      * half_time_lofi: bombo sutil y rimshot solo en el beat 3 (half-time relajado).
+      * classic_boombap: bombo en 1 y 3-and, rim en 2 y 4 con swing MPC sutil.
+      * dilla_drunken: micro-timing humano arrastrado (+25-35ms), ghost notes, kicks sincopados.
+      * bossa_lofi: patrón cross-stick bossa syncopation sobre sub-bombo suave.
+      * chill_waltz_triplets: subdivisión ternaria / shaker orgánico continuo.
+  - Síntesis percusiva multivariable (4 kicks, 4 rims/snares, 4 tipos de hats/shakers).
+  - Rasgueos de piano y Rhodes humanos (micro-offset de 15 a 35ms por cuerda/nota).
+  - Patrones de acompañamiento variados (strum sostenido, stab sincopado en contratiempo, arpegio fluido).
+  - 16 progresiones de acordes ricas en extensiones de 9na, 11na y 13ra (8 Cafe / Día, 8 Outpost / Noche).
+  - Bajo orgánico con líneas de paso (notas raíz, quintas, octavas suaves y deslizamientos).
+  - Generador de vinilo analógico procedural (crackle estocástico + hiss cálido + wow/flutter tape).
+  - Foley orgánico reactivo según la escena (/tmp/star_scene.txt).
+  - Salida PCM s16le estéreo continua y rotación WAV compatible con audio_supervisor.py.
 """
 
-import sys, os, time, json, math, random, sqlite3, urllib.request, threading
+import os
+import sys
+import time
+import math
+import random
+import pathlib
 import numpy as np
-from scipy import signal as sps
-
-os.environ['TZ'] = 'America/Santiago'
-try:
-    time.tzset()
-except AttributeError:
-    pass
+import scipy.signal as sps
+import scipy.io.wavfile as wavfile
 
 try:
-    from pedalboard import Pedalboard, Reverb, Chorus, Compressor, LowpassFilter, HighpassFilter, Gain
-    HAS_PEDALBOARD = True
+    from pedalboard import (
+        Pedalboard, Reverb, Chorus, Compressor, Gain, LowpassFilter, HighpassFilter
+    )
+    HAVE_PEDALBOARD = True
 except ImportError:
-    HAS_PEDALBOARD = False
-
-SR               = 44100
-CHUNK            = SR * 4
-WEATHER_INTERVAL = 1800
-NETWORK_INTERVAL = 300
-SYSTEM_INTERVAL  = 60
-NETALERTX_DB     = "/opt/stacks/netalertx/data/db/app.db"
-STATE_FILE       = "/tmp/star_state.txt"
-VIEWERS_FILE     = "/tmp/star_viewers.txt"
-SCENE_FILE       = "/tmp/star_scene.txt"
-AUDIO_SNAPSHOT   = "/tmp/star_audio_snapshot.json"
-SNAPSHOT_MAX_AGE = 6 * 3600
-SNAPSHOT_INTERVAL = 30
-STARTUP_FADE_SECONDS = 10.0
-
-# ──────────────────────────────────────────────────────────
-# Sets de acordes por escena
-# ──────────────────────────────────────────────────────────
-
-CHORD_SETS = {
-    # Estación orbital: oscuro, tenso, electrónico
-    'dark_station': [
-        [73.42, 146.83, 220.00, 261.63, 311.13],
-        [98.00, 196.00, 233.08, 261.63, 392.00],
-        [116.54, 174.61, 233.08, 293.66, 466.16],
-        [110.00, 164.81, 220.00, 261.63, 329.63],
-    ],
-    # Nieve/ártico: frío, cristalino, amplio
-    'arctic': [
-        [65.41, 196.00, 233.08, 293.66, 392.00],
-        [103.83, 207.65, 261.63, 311.13, 392.00],
-        [87.31, 174.61, 233.08, 261.63, 349.23],
-        [73.42, 146.83, 207.65, 261.63, 311.13],
-    ],
-    # Bosque: cálido, orgánico, resonante
-    'forest': [
-        [65.41, 130.81, 196.00, 261.63, 329.63, 392.00],
-        [73.42, 146.83, 220.00, 293.66, 369.99, 440.00],
-        [87.31, 130.81, 174.61, 261.63, 349.23, 523.25],
-        [98.00, 146.83, 196.00, 261.63, 311.13, 392.00],
-    ],
-    # Desierto: seco, caliente, disperso
-    'desert': [
-        [73.42, 220.00, 277.18, 329.63, 440.00],
-        [77.78, 155.56, 233.08, 293.66, 440.00],
-        [98.00, 196.00, 233.08, 293.66, 392.00],
-        [110.00, 220.00, 293.66, 329.63, 440.00],
-    ],
-    # Submarino: grave, presión, resonancia profunda
-    'deep_sea': [
-        [55.00, 110.00, 164.82, 220.00, 329.62, 440.00],
-        [61.74, 123.48, 185.00, 261.62, 370.00, 493.88],
-        [65.42, 130.82, 196.00, 261.62, 311.12, 466.16],
-        [58.28, 116.54, 174.62, 233.08, 349.22, 466.16],
-    ],
-    # Montaña: amplio, viento, elevado
-    'mountain': [
-        [65.41, 164.81, 196.00, 261.63, 392.00, 523.25],
-        [73.42, 146.83, 220.00, 261.63, 349.23, 440.00],
-        [82.41, 164.81, 207.65, 261.63, 311.13, 415.30],
-        [87.31, 174.61, 233.08, 261.63, 349.23, 466.16],
-    ],
-    # Reactor nuclear: zumbido industrial, cromatismo tenso
-    'reactor': [
-        [55.00, 110.00, 155.56, 207.65, 233.08],
-        [61.74, 123.47, 174.61, 220.00, 246.94],
-        [69.30, 138.59, 185.00, 246.94, 277.18],
-        [58.27, 116.54, 164.81, 220.00, 261.63],
-    ],
-    # Volcánica: movimiento telúrico, tensión de magma
-    'volcanic': [
-        [49.00, 98.00, 146.84, 196.00, 277.18, 370.00],
-        [55.00, 110.00, 155.56, 220.00, 311.12, 415.30],
-        [46.24, 92.50, 138.60, 185.00, 261.62, 349.22],
-        [51.92, 103.82, 146.84, 207.66, 293.66, 392.00],
-    ],
-}
-
-BELL_SETS = {
-    # Bajados una octava respecto al original — máximo 440 Hz para que no chirrién
-    'dark_station': [146.83, 164.81, 185.00, 220.00, 246.94, 293.66],
-    'arctic':       [155.56, 174.61, 196.00, 220.00, 246.94, 261.63],
-    'forest':       [130.81, 164.81, 196.00, 220.00, 261.63, 293.66],
-    'desert':       [110.00, 123.47, 138.59, 164.81, 185.00, 220.00],
-    'deep_sea':     [55.00,  73.42,  87.31,  110.00, 130.81, 146.83],
-    'mountain':     [146.83, 174.61, 196.00, 220.00, 261.63, 293.66],
-    'reactor':      [220.00, 233.08, 246.94, 261.63, 277.18, 293.66],
-    'volcanic':     [41.20,  55.00,  69.30,  82.41,  110.00, 146.83],
-}
-
-MELODY_SETS = {
-    # Bajos y espaciados — sin notas > 300 Hz para evitar chirriante
-    'dark_station': [146.83, 130.81, 110.00, 123.47, 164.81, 146.83, 130.81, 98.00,
-                     155.56, 130.81, 123.47, 110.00, 174.61, 146.83],
-    'arctic':       [196.00, 146.83, 130.81, 164.81, 146.83, 174.61, 155.56, 130.81,
-                     207.65, 155.56, 138.59, 164.81, 196.00, 146.83],
-    'forest':       [196.00, 164.81, 130.81, 164.81, 220.00, 196.00, 174.61, 146.83,
-                     261.63, 196.00, 164.81, 130.81, 220.00, 185.00],
-    'desert':       [220.00, 196.00, 164.81, 174.61, 146.83, 196.00, 220.00, 185.00,
-                     246.94, 196.00, 174.61, 155.56, 207.65, 185.00],
-    'deep_sea':     [55.00,  65.41,  82.41,  73.42,  61.74,  55.00,  49.00,  58.27,
-                     69.30,  77.78,  87.31,  73.42,  65.41,  55.00],
-    'mountain':     [196.00, 164.81, 146.83, 174.61, 196.00, 220.00, 164.81, 196.00,
-                     246.94, 196.00, 174.61, 164.81, 220.00, 185.00],
-    'reactor':      [103.83, 110.00, 116.54, 103.83,  92.50, 110.00, 123.47, 103.83,
-                      87.31, 110.00, 130.81, 116.54,  98.00, 110.00],
-    'volcanic':     [ 36.71,  41.20,  49.00,  43.65,  36.71,  41.20,  32.70,  41.20,
-                      55.00,  49.00,  43.65,  36.71,  46.25,  41.20],
-}
-
-SONAR_FREQS = {
-    'dark_station': 650, 'arctic': 900, 'forest': 1800,
-    'desert': 1400, 'deep_sea': 280, 'mountain': 1200,
-}
-
-# Perfil de audio por escena de video
-SCENE_PROFILES = {
-    'orbital':   {
-        'chord': 'dark_station', 'reverb_base': 0.94, 'wet_base': 0.55,
-        'chorus_base': 0.42, 'sub_base': 0.018,
-        # fan reducido (1.6→1.0) para menos ruido broadband de ventilación
-        'fan_gain': 1.0, 'radio_gain': 0.42, 'water_gain': 0.0,
-        'wind_gain': 0.5, 'whistle_gain': 0.22, 'bell_gain': 0.18, 'ding_gain': 0.7,
-        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
-        'elec_hum': True, 'rain_glass': True, 'blizzard': False,
-        'creak_gain': 0.0, 'corona_gain': 0.0, 'city_gain': 0.12, 'clock_night': True, 'cassette': 0.003,
-        'label': 'ORBITAL STATION',
-        # Soporte vital + comunicaciones fragmentadas SCP
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.20, 'morse_gain': 0.06, 'anomaly_gain': 0.0,
-        'rcs_gain': 0.85, 'telemetry_gain': 0.90,
-    },
-    'nieve':     {
-        'chord': 'arctic', 'reverb_base': 0.90, 'wet_base': 0.48,
-        'chorus_base': 0.34, 'sub_base': 0.012,
-        'fan_gain': 0.2, 'radio_gain': 0.28, 'water_gain': 0.0,
-        # wind_gain reducido (1.8→0.85): el blizzard ya aporta textura, el viento no debe saturar
-        'wind_gain': 0.85, 'whistle_gain': 0.40, 'bell_gain': 0.20, 'ding_gain': 0.3,
-        'rain_base': 0.22, 'rain_wx_mul': 0.35, 'snow': True,
-        'elec_hum': False, 'rain_glass': True, 'blizzard': True,
-        'creak_gain': 0.5, 'corona_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
-        'label': 'ARCTIC OUTPOST',
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        'glacier_gain': 0.70, 'wire_gain': 0.75,
-    },
-    'bosque':    {
-        'chord': 'forest', 'reverb_base': 0.78, 'wet_base': 0.38,
-        'chorus_base': 0.28, 'sub_base': 0.010,
-        'fan_gain': 0.0, 'radio_gain': 0.22, 'water_gain': 0.5,
-        'wind_gain': 0.9, 'whistle_gain': 0.30, 'bell_gain': 0.22, 'ding_gain': 0.0,
-        'rain_base': 0.55, 'rain_wx_mul': 0.9, 'snow': False,
-        'elec_hum': False, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.0, 'corona_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
-        'label': 'FOREST STATION',
-        # Anomaly sutil — algo extraño en el bosque
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        'drops_gain': 0.90, 'sway_gain': 0.70,
-    },
-    'submarina': {
-        'chord': 'deep_sea', 'reverb_base': 0.97, 'wet_base': 0.58,
-        'chorus_base': 0.18, 'sub_base': 0.022,
-        'fan_gain': 0.4, 'radio_gain': 0.28, 'water_gain': 1.0,
-        'wind_gain': 0.2, 'whistle_gain': 0.08, 'bell_gain': 0.22, 'ding_gain': 0.5,
-        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
-        'elec_hum': True, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.35, 'corona_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
-        'label': 'DEEP SEA BASE',
-        # Soporte vital + anomaly profundo
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.15, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        'subcreak_gain': 0.80, 'sonar_gain': 1.0,
-    },
-    'montana':   {
-        'chord': 'mountain', 'reverb_base': 0.92, 'wet_base': 0.55,
-        'chorus_base': 0.20, 'sub_base': 0.014,
-        'fan_gain': 0.0, 'radio_gain': 0.0, 'water_gain': 0.0,
-        # wind_gain aumentado (0.30→0.55) para más carácter de montaña
-        'wind_gain': 0.55, 'whistle_gain': 0.40, 'bell_gain': 0.14, 'ding_gain': 0.0,
-        'rain_base': 0.60, 'rain_wx_mul': 0.5, 'snow': False,
-        'elec_hum': False, 'rain_glass': False, 'blizzard': True,
-        'creak_gain': 0.25, 'corona_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
-        'label': 'MOUNTAIN BASE',
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        'avalanche_gain': 0.70, 'harp_gain': 0.80, 'wire_gain': 0.55,
-    },
-    'desierto':  {
-        'chord': 'desert', 'reverb_base': 0.68, 'wet_base': 0.28,
-        'chorus_base': 0.18, 'sub_base': 0.008,
-        'fan_gain': 0.0, 'radio_gain': 0.0, 'water_gain': 0.0,
-        'wind_gain': 0.7, 'whistle_gain': 0.22, 'bell_gain': 0.12, 'ding_gain': 0.0,
-        'rain_base': 0.0, 'rain_wx_mul': 0.08, 'snow': False,
-        'elec_hum': False, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.0, 'corona_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
-        'label': 'DESERT HEAT',
-        # Anomaly leve — mirages del desierto
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        'sand_gain': 0.90,
-    },
-    'electrica': {
-        'chord': 'dark_station', 'reverb_base': 0.96, 'wet_base': 0.62,
-        'chorus_base': 0.30, 'sub_base': 0.016,
-        'fan_gain': 0.0, 'radio_gain': 0.0, 'water_gain': 0.0,
-        'wind_gain': 0.4, 'whistle_gain': 0.55, 'bell_gain': 0.10, 'ding_gain': 0.0,
-        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
-        'elec_hum': 'dual', 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.3, 'corona_gain': 0.85, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.002,
-        'label': 'ELECTRIC FIELD',
-        # Anomaly fuerte + alarma + morse fragmentado = máximo SCP
-        'emf_gain': 1.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.20, 'anomaly_gain': 0.0,
-    },
-    # ── Nuevas escenas ─────────────────────────────────────────
-    'volcanica': {
-        'chord': 'volcanic', 'reverb_base': 0.97, 'wet_base': 0.62,
-        'chorus_base': 0.20, 'sub_base': 0.028,
-        # fan removido (géiseres, no ventilador), agua de géiser añadida
-        'fan_gain': 0.0, 'radio_gain': 0.18, 'water_gain': 0.25,
-        'wind_gain': 0.15, 'whistle_gain': 0.10, 'bell_gain': 0.0, 'ding_gain': 0.0,
-        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
-        'elec_hum': False, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.70, 'corona_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.001,
-        'label': 'GEOTHERMAL OUTPOST',
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        'magma_gain': 1.0, 'steam_gain': 0.90,
-    },
-    'reactor': {
-        'chord': 'reactor', 'reverb_base': 0.88, 'wet_base': 0.44,
-        'chorus_base': 0.18, 'sub_base': 0.015,
-        'fan_gain': 1.3, 'radio_gain': 0.22, 'water_gain': 0.30,
-        'wind_gain': 0.0, 'whistle_gain': 0.0, 'bell_gain': 0.0, 'ding_gain': 0.0,
-        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
-        'elec_hum': True, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.12, 'corona_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.003,
-        'label': 'NUCLEAR REACTOR',
-        # Alarma de fondo de reactor + anomaly sutil de radiación
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        'geiger_gain': 0.95, 'coolant_gain': 0.80, 'valve_gain': 0.72,
-    },
-    'tormenta': {
-        'chord': 'mountain', 'reverb_base': 0.96, 'wet_base': 0.55,
-        'chorus_base': 0.28, 'sub_base': 0.018,
-        'fan_gain': 0.0, 'radio_gain': 0.28, 'water_gain': 0.0,
-        # wind_gain reducido (1.65→0.90): la lluvia + trueno ya dan la energía, el viento queda de fondo
-        'wind_gain': 0.90, 'whistle_gain': 0.55, 'bell_gain': 0.06, 'ding_gain': 0.0,
-        'rain_base': 0.75, 'rain_wx_mul': 0.12, 'snow': False,
-        'elec_hum': False, 'rain_glass': True, 'blizzard': False,
-        'creak_gain': 0.22, 'corona_gain': 0.45, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.001,
-        'label': 'STORM BUNKER',
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        'thunder_gain': 0.80,
-    },
-    # ── Escenas nuevas Jun 2026 ────────────────────────────────
-    'array_suiza': {
-        'chord': 'arctic', 'reverb_base': 0.92, 'wet_base': 0.52,
-        'chorus_base': 0.22, 'sub_base': 0.010,
-        'fan_gain': 0.0, 'radio_gain': 0.55, 'water_gain': 0.0,
-        'wind_gain': 0.70, 'whistle_gain': 0.45, 'bell_gain': 0.12, 'ding_gain': 0.0,
-        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
-        'elec_hum': True, 'rain_glass': False, 'blizzard': True,   # viento alpino activo
-        'creak_gain': 0.45, 'corona_gain': 0.20, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.003,
-        'label': 'SIGNAL ARRAY — ALPS',
-        'emf_gain': 0.80, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.25, 'anomaly_gain': 0.0,
-        'rcs_gain': 0.0, 'telemetry_gain': 0.90,
-        'wire_gain': 0.65, 'glacier_gain': 0.25,  # cables tensados + crujido metálico del array
-    },
-    'latam_noche': {
-        'chord': 'forest', 'reverb_base': 0.65, 'wet_base': 0.30,
-        'chorus_base': 0.15, 'sub_base': 0.010,
-        'fan_gain': 0.0, 'radio_gain': 0.10, 'water_gain': 0.0,
-        'wind_gain': 0.20, 'whistle_gain': 0.0, 'bell_gain': 0.05, 'ding_gain': 0.0,
-        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
-        'elec_hum': False, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.0, 'corona_gain': 0.0, 'city_gain': 0.55, 'clock_night': False, 'cassette': 0.004,
-        'label': 'LATAM NOCHE',
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        # Perros, tráfico y motos muy al fondo — melodía domina
-        'dog_gain': 0.45, 'traffic_gain': 0.50, 'moto_gain': 0.35,
-        'frog_gain': 0.0, 'leaves_gain': 0.0,
-    },
-    'amazonica': {
-        'chord': 'forest', 'reverb_base': 0.88, 'wet_base': 0.45,
-        'chorus_base': 0.30, 'sub_base': 0.014,
-        'fan_gain': 0.0, 'radio_gain': 0.08, 'water_gain': 0.28,
-        'wind_gain': 0.10, 'whistle_gain': 0.0, 'bell_gain': 0.0, 'ding_gain': 0.0,
-        'rain_base': 0.40, 'rain_wx_mul': 0.20, 'snow': False,
-        'elec_hum': False, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.0, 'corona_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.001,
-        'label': 'AMAZONIA PROFUNDA',
-        'emf_gain': 0.0, 'siren_gain': 0.0, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        # Coro de sapos + hojas — selva densa nocturna
-        'frog_gain': 0.85, 'leaves_gain': 0.60,
-        'dog_gain': 0.0, 'traffic_gain': 0.0, 'moto_gain': 0.0,
-        'drops_gain': 0.70, 'sway_gain': 0.55,
-    },
-    'scp_exterior': {
-        'chord': 'arctic', 'reverb_base': 0.82, 'wet_base': 0.40,
-        'chorus_base': 0.18, 'sub_base': 0.010,
-        'fan_gain': 0.0, 'radio_gain': 0.18, 'water_gain': 0.0,
-        'wind_gain': 0.45, 'whistle_gain': 0.20, 'bell_gain': 0.0, 'ding_gain': 0.0,
-        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
-        'elec_hum': True, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.30, 'corona_gain': 0.30, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.003,
-        'label': 'SCP FOUNDATION — EXTERIOR',
-        'emf_gain': 0.40, 'siren_gain': 0.25, 'breath_gain': 0.0, 'morse_gain': 0.0, 'anomaly_gain': 0.0,
-        # Grillos, hojas y perro lejano — instalación abandonada con luces funcionando
-        'leaves_gain': 0.75, 'frog_gain': 0.0,
-        'dog_gain': 0.25, 'traffic_gain': 0.0, 'moto_gain': 0.0,
-        'sway_gain': 0.50,
-    },
-    'scp_contencion': {
-        'chord': 'dark_station', 'reverb_base': 0.96, 'wet_base': 0.60,
-        'chorus_base': 0.25, 'sub_base': 0.018,
-        'fan_gain': 0.0, 'radio_gain': 0.12, 'water_gain': 0.0,
-        'wind_gain': 0.30, 'whistle_gain': 0.15, 'bell_gain': 0.0, 'ding_gain': 0.0,
-        'rain_base': 0.0, 'rain_wx_mul': 0.0, 'snow': False,
-        'elec_hum': True, 'rain_glass': False, 'blizzard': False,
-        'creak_gain': 0.55, 'corona_gain': 0.0, 'city_gain': 0.0, 'clock_night': False, 'cassette': 0.003,
-        'label': 'SCP CONTAINMENT PLATFORM',
-        'emf_gain': 0.60, 'siren_gain': 0.50, 'breath_gain': 0.0, 'morse_gain': 0.10, 'anomaly_gain': 0.0,
-        # Bosque conífero nocturno + hojas + niebla (creak simula cadenas)
-        'leaves_gain': 0.50, 'frog_gain': 0.0,
-        'dog_gain': 0.0, 'traffic_gain': 0.0, 'moto_gain': 0.0,
-        'sway_gain': 0.65, 'glacier_gain': 0.30,
-    },
-}
-
-DEFAULT_SCENE = 'orbital'
-
-
-def _soften_scene_profiles():
-    """Mantiene las capas en rango ambient: presentes, pero nunca protagonistas agresivas."""
-    caps = {
-        'bell_gain': 0.25,
-        'ding_gain': 0.40,
-        'whistle_gain': 0.45,
-        'corona_gain': 0.65,
-        'morse_gain': 0.25,
-        'siren_gain': 0.15,
-        'fan_gain': 0.85,
-        'radio_gain': 0.45,
-        'leaves_gain': 0.65,
-        'frog_gain': 0.75,
-        'dog_gain': 0.45,
-        'moto_gain': 0.40,
-        'traffic_gain': 0.65,
-        'geiger_gain': 0.75,
-        'wire_gain': 0.65,
-        'drops_gain': 0.75,
-        'sonar_gain': 0.85,
-        'avalanche_gain': 0.65,
-        'harp_gain': 0.65,
-        'sand_gain': 0.75,
-        'steam_gain': 0.75,
-        'thunder_gain': 0.85,
-        'valve_gain': 0.65,
-        'rcs_gain': 0.65,
-        'telemetry_gain': 0.75,
-        'subcreak_gain': 0.75,
-        'glacier_gain': 0.65,
-    }
-    for prof in SCENE_PROFILES.values():
-        for key, cap in caps.items():
-            if key in prof:
-                prof[key] = min(prof[key], cap)
-
-
-_soften_scene_profiles()
-
-
-# ──────────────────────────────────────────────────────────
-# Condiciones externas
-# ──────────────────────────────────────────────────────────
-
-def fetch_weather():
-    try:
-        req = urllib.request.Request("http://ip-api.com/json/", headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            d = json.loads(r.read().decode())
-            lat, lon = d.get('lat', -33.45), d.get('lon', -70.66)
-    except Exception:
-        lat, lon = -33.45, -70.66
-    try:
-        url = (f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}"
-               f"&current=temperature_2m,relative_humidity_2m,wind_speed_10m,weather_code")
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as r:
-            w = json.loads(r.read().decode())['current']
-            return w['temperature_2m'], w['relative_humidity_2m'], w['wind_speed_10m'], w['weather_code']
-    except Exception:
-        return 20.0, 50.0, 10.0, 0
-
-
-def fetch_network_devices():
-    try:
-        con = sqlite3.connect(f"file:{NETALERTX_DB}?mode=ro", uri=True, timeout=3)
-        row = con.execute("SELECT onlineDevices FROM Online_History ORDER BY rowid DESC LIMIT 1").fetchone()
-        con.close()
-        return int(row[0]) if row else 0
-    except Exception:
-        return 0
-
-
-def fetch_system_load():
-    try:
-        with open('/proc/loadavg') as f:
-            load1 = float(f.read().split()[0])
-        with open('/proc/meminfo') as f:
-            lines = f.read().splitlines()
-        mem = {l.split(':')[0]: int(l.split()[1]) for l in lines if ':' in l}
-        used_pct = 1.0 - mem.get('MemAvailable', 1) / max(mem.get('MemTotal', 1), 1)
-        return load1, used_pct
-    except Exception:
-        return 0.5, 0.5
-
-
-def fetch_viewers():
-    try:
-        with open(VIEWERS_FILE) as f:
-            return int(f.read().strip())
-    except Exception:
-        return 0
-
-
-def weather_rain_intensity(w_code):
-    """Intensidad de lluvia 0–1 según weather_code de Open-Meteo."""
-    if 51 <= w_code <= 57:  return 0.30   # llovizna
-    if 61 <= w_code <= 67:  return 0.65   # lluvia moderada
-    if 71 <= w_code <= 77:  return 0.45   # nieve
-    if 80 <= w_code <= 82:  return 0.85   # chubascos
-    if 95 <= w_code <= 99:  return 1.00   # tormenta
-    return 0.0
-
-
-def weather_sound_cause(w_code, wind_spd, humidity, hour):
-    """Describe el factor climático que domina la textura audible del momento."""
-    if 95 <= w_code <= 99:
-        return "tormenta"
-    if 80 <= w_code <= 82:
-        return "chubascos"
-    if 61 <= w_code <= 67:
-        return "lluvia"
-    if 71 <= w_code <= 77:
-        return "nieve"
-    if wind_spd >= 18:
-        return "viento fuerte"
-    if humidity >= 75:
-        return "humedad"
-    if hour >= 19 or hour < 6:
-        return "noche"
-    return "clima estable"
-
-
-def fetch_scene():
-    try:
-        with open(SCENE_FILE) as f:
-            s = f.read().strip()
-            return s if s in SCENE_PROFILES else DEFAULT_SCENE
-    except Exception:
-        return DEFAULT_SCENE
-
-
-def day_phase(hour):
-    if 22 <= hour or hour < 5:  return 0.28, 0.24, 0.26
-    elif 5  <= hour < 8:        return 0.50, 0.42, 0.44
-    elif 8  <= hour < 18:       return 0.82, 0.85, 0.78
-    else:                       return 0.55, 0.52, 0.50
-
-
-def biquad_bandpass(fc, Q, sr=44100):
-    """Diseño analítico ultra-rápido de filtro biquad paso banda (EQ Cookbook)."""
-    w0 = 2 * np.pi * fc / sr
-    alpha = np.sin(w0) / (2.0 * Q)
-    cos_w0 = np.cos(w0)
-    a0 = 1.0 + alpha
-    b = np.array([alpha, 0.0, -alpha]) / a0
-    a = np.array([a0, -2.0 * cos_w0, 1.0 - alpha]) / a0
-    return b, a
-
-
-
-def biquad_highpass(fc, Q, sr=44100):
-    """Diseño analítico ultra-rápido de filtro biquad paso alto (EQ Cookbook)."""
-    w0 = 2 * np.pi * fc / sr
-    alpha = np.sin(w0) / (2.0 * Q)
-    cos_w0 = np.cos(w0)
-    a0 = 1.0 + alpha
-    b = np.array([(1.0 + cos_w0)/2.0, -(1.0 + cos_w0), (1.0 + cos_w0)/2.0]) / a0
-    a = np.array([a0, -2.0 * cos_w0, 1.0 - alpha]) / a0
-    return b, a
-
-
-def biquad_lowpass(fc, Q, sr=44100):
-    """Diseño analítico ultra-rápido de filtro biquad paso bajo (EQ Cookbook)."""
-    w0 = 2 * np.pi * fc / sr
-    alpha = np.sin(w0) / (2.0 * Q)
-    cos_w0 = np.cos(w0)
-    a0 = 1.0 + alpha
-    b = np.array([(1.0 - cos_w0)/2.0, 1.0 - cos_w0, (1.0 - cos_w0)/2.0]) / a0
-    a = np.array([a0, -2.0 * cos_w0, 1.0 - alpha]) / a0
-    return b, a
-
-
-# ──────────────────────────────────────────────────────────
-# Estado global
-# ──────────────────────────────────────────────────────────
-
-class AudioState:
-    def __init__(self):
-        self.scene       = DEFAULT_SCENE
-        self.chord_set   = SCENE_PROFILES[DEFAULT_SCENE]['chord']
-        self.brightness  = 0.3
-        self.density     = 0.3
-        self.energy      = 0.3
-        self.sub_gain    = 0.05
-        self.reverb_room = 0.90
-        self.reverb_wet  = 0.60
-        self.chorus_mix  = 0.40
-        self.sonar_freq  = 650
-
-        # Targets para lerp
-        self.t_brightness = 0.3
-        self.t_density    = 0.3
-        self.t_energy     = 0.3
-        self.t_sub        = 0.05
-        self.t_reverb     = 0.90
-        self.t_reverb_wet = 0.60
-        self.t_chorus     = 0.40
-
-        self.LERP      = 0.003   # velocidad normal
-        self.fast_lerp = False   # True durante 60s al cambiar escena
-
-        self.temp = 15.0; self.humidity = 50.0; self.wind_spd = 5.0; self.w_code = 0
-        self.devices = 0; self.load1 = 0.5; self.viewers = 0
-        self.load_ram_pct = 0.0
-        self.rain_intensity = 0.0   # calculado de w_code en update_targets
-
-    def update_targets(self):
-        new_scene = fetch_scene()
-        if new_scene != self.scene:
-            self.scene      = new_scene
-            self.fast_lerp  = True
-            print(f"[INFO] Escena → {new_scene}", file=sys.stderr)
-
-        prof = SCENE_PROFILES[self.scene]
-        self.chord_set  = prof['chord']
-        self.sonar_freq = SONAR_FREQS.get(self.chord_set, 800)
-
-        hour = time.localtime().tm_hour
-        b, d, e = day_phase(hour)
-
-        device_bonus = min(self.devices / 30.0, 1.0) * 0.20
-        viewer_bonus = min(self.viewers / 20.0, 1.0) * 0.12
-        load_pen     = min(self.load1 / 4.0, 0.5)
-
-        # Modulaciones por clima real (Santiago)
-        temp_factor = (self.temp - 15.0) / 40.0 * 0.15          # -0.05 a +0.10 aprox
-        hum_factor  = (self.humidity - 50.0) / 100.0 * 0.08     # -0.04 a +0.04 aprox
-        wind_factor = (self.wind_spd / 30.0) * 0.25             # 0 a 0.25+
-
-        self.t_brightness = float(np.clip(b + temp_factor - load_pen * 0.1, 0.22, 1.0))
-        self.t_density    = float(np.clip(d + device_bonus + viewer_bonus - load_pen * 0.15, 0.20, 1.0))
-        self.t_energy     = float(np.clip(e + wind_factor - load_pen * 0.1, 0.20, 1.0))
-        self.t_sub        = prof['sub_base'] * (1.0 + self.t_energy * 0.5)
-        self.rain_intensity = weather_rain_intensity(self.w_code)
-        
-        # Bono de reverb nocturna para un sonido más profundo/exquisito
-        night_reverb_bonus = 0.05 if (hour >= 19 or hour < 6) else 0.0
-        self.t_reverb     = float(np.clip(prof['reverb_base'] + hum_factor + night_reverb_bonus, 0.50, 0.98))
-        self.t_reverb_wet = float(np.clip(prof['wet_base'] + hum_factor * 0.75 + night_reverb_bonus * 0.5, 0.10, 0.85))
-        self.t_chorus     = prof['chorus_base']
-
-    def lerp_step(self, n):
-        rate = self.LERP * (15.0 if self.fast_lerp else 1.0)
-        k = 1.0 - (1.0 - rate) ** n
-        self.brightness  += (self.t_brightness  - self.brightness)  * k
-        self.density     += (self.t_density     - self.density)     * k
-        self.energy      += (self.t_energy      - self.energy)      * k
-        self.sub_gain    += (self.t_sub         - self.sub_gain)    * k
-        self.reverb_room += (self.t_reverb      - self.reverb_room) * k
-        self.reverb_wet  += (self.t_reverb_wet  - self.reverb_wet)  * k
-        self.chorus_mix  += (self.t_chorus      - self.chorus_mix)  * k
-
-        # Desactivar fast_lerp cuando params están cerca del target
-        if self.fast_lerp:
-            delta = (abs(self.reverb_room - self.t_reverb) +
-                     abs(self.reverb_wet  - self.t_reverb_wet) +
-                     abs(self.brightness  - self.t_brightness))
-            if delta < 0.01:
-                self.fast_lerp = False
-
-    def export(self, peak=None, rms=None, chunk_count=None, chord_label=None,
-               layer_label=None, master_gain=None):
-        prof  = SCENE_PROFILES.get(self.scene, SCENE_PROFILES[DEFAULT_SCENE])
-        label = prof['label']
-        ram_pct = f"{int(self.load_ram_pct * 100)}%"
-        hour = time.localtime().tm_hour
-        cause = weather_sound_cause(self.w_code, self.wind_spd, self.humidity, hour)
-        metrics = {
-            "chord": chord_label or self.chord_set,
-            "reverb": f"{self.reverb_room:.2f}",
-            "wet": f"{self.reverb_wet:.2f}",
-            "cause": cause,
-            "peak": "n/a" if peak is None else f"{peak:.3f}",
-            "rms": "n/a" if rms is None else f"{rms:.4f}",
-            "chunk": "0" if chunk_count is None else str(chunk_count),
-            "layer": layer_label or "n/a",
-            "gain": "n/a" if master_gain is None else f"{master_gain:.2f}",
-        }
-        try:
-            with open(STATE_FILE, 'w') as f:
-                extra = "|".join(f"{key}={value}" for key, value in metrics.items())
-                f.write(f"{label}|{self.load1:.2f}|{ram_pct}|{self.devices}|{extra}")
-        except Exception:
-            pass
-
-
-# ──────────────────────────────────────────────────────────
-# Síntesis principal
-# ──────────────────────────────────────────────────────────
-
-def load_audio_snapshot():
-    """Restaura el reloj musical tras reconexiones breves de FFmpeg."""
-    try:
-        if not os.path.exists(AUDIO_SNAPSHOT):
-            return None
-        with open(AUDIO_SNAPSHOT, 'r') as f:
-            data = json.load(f)
-        age = time.time() - float(data.get('wall_time', 0))
-        if age < 0 or age > SNAPSHOT_MAX_AGE:
-            return None
-        return data
-    except Exception:
-        return None
-
-
-def save_audio_snapshot(synth):
-    """Guarda estado mínimo de forma atómica para no reiniciar el loop audible."""
-    tmp = f"{AUDIO_SNAPSHOT}.tmp"
-    try:
-        with open(tmp, 'w') as f:
-            json.dump(synth.snapshot(), f)
-        os.replace(tmp, AUDIO_SNAPSHOT)
-    except Exception:
-        try:
-            if os.path.exists(tmp):
-                os.remove(tmp)
-        except Exception:
-            pass
-
-
-class Synthesizer:
-    def __init__(self):
-        snap = load_audio_snapshot()
-        self.session_seed = int(snap.get('session_seed', int(time.time()))) if snap else int(time.time())
-        self.progression_rng = random.Random(self.session_seed + 404)
-
-        self.t_abs     = float(snap.get('t_abs', 0.0)) if snap else 0.0
-        self.chord_t   = float(snap.get('chord_t', 0.0)) if snap else 0.0
-        self.chord_idx = int(snap.get('chord_idx', 0)) if snap else 0
-        self.chord_dur = float(snap.get('chord_dur', 0.0)) if snap else 0.0
-        if self.chord_dur <= 0:
-            self.chord_dur = self._next_chord_duration()
-
-        self.bell_rng  = random.Random(self.session_seed + 17)
-        self.mel_rng   = random.Random(self.session_seed + 31)
-        self.mel_scene = None
-        self.wind_rng  = np.random.RandomState(self.session_seed + 101)
-        self.last_bell = float(snap.get('last_bell', max(0.0, self.t_abs - 90.0))) if snap else 0.0
-        self.last_note = float(snap.get('last_note', max(0.0, self.t_abs - 120.0))) if snap else 0.0
-        self.active_phrase = snap.get('active_phrase', []) if snap else []
-        self.bell_active = []
-        self.lead_lp_state = 0.0
-        self.wind_zi1  = None
-        self.wind_zi2  = None
-        self.rcs_zi_rumble = np.zeros(2)
-        self.rcs_zi_hiss = np.zeros(2)
-        self.ambient   = AmbientSounds(start_t=self.t_abs)
-        self.startup_fade_left = STARTUP_FADE_SECONDS
-        self.last_layer = "init"
-
-        # ── Perlin-like LFO state (smooth random walk para modular el pad orgánicamente) ──
-        # Técnica de chicomcastro/procedural-music-generator: random walk filtrado en vez de LFO sinético
-        self._perlin_rng = np.random.RandomState(self.session_seed + 7777)
-        self._perlin_val = 0.0    # valor actual del random walk
-        self._perlin_vel = 0.0    # velocidad del random walk
-
-        if snap:
-            log(f"audio snapshot restaurado: t={self.t_abs:.0f}s chord={self.chord_idx} dur={self.chord_dur:.1f}s")
-
-    def _next_chord_duration(self):
-        """Duraciones largas e irregulares para evitar ciclos armónicos obvios."""
-        return self.progression_rng.uniform(70.0, 135.0)
-
-    def _ensure_scene_melody_rng(self, scene):
-        """Cambia la secuencia melódica al cambiar de escena sin reiniciar el audio."""
-        if scene == self.mel_scene:
-            return
-        scene_hash = sum((i + 1) * ord(c) for i, c in enumerate(scene))
-        self.mel_rng = random.Random(self.session_seed + 31 + scene_hash)
-        self.active_phrase = []
-        self.last_note = max(0.0, self.t_abs - 120.0)
-        self.mel_scene = scene
-
-    def snapshot(self):
-        return {
-            'session_seed': self.session_seed,
-            't_abs': self.t_abs,
-            'chord_t': self.chord_t,
-            'chord_idx': self.chord_idx,
-            'chord_dur': self.chord_dur,
-            'last_bell': self.last_bell,
-            'last_note': self.last_note,
-            'active_phrase': self.active_phrase,
-            'wall_time': time.time(),
-        }
-
-    def generate_chunk(self, state):
-        n = CHUNK
-        self._ensure_scene_melody_rng(state.scene)
-        t = np.linspace(self.t_abs, self.t_abs + n / SR, n, endpoint=False)
-        chords  = CHORD_SETS.get(state.chord_set, CHORD_SETS['dark_station'])
-        bells_n = BELL_SETS.get(state.chord_set, BELL_SETS['dark_station'])
-        notes_n = MELODY_SETS.get(state.chord_set, MELODY_SETS['dark_station'])
-
-        # ── Pad FM (2 operadores) — reemplaza triangle+sine ────────────────────────────
-        # FM Synthesis: carrier = sin(2π fc t + I * sin(2π fm t))
-        # Ratio fm:fc y índice I dan el timbre. I bajo (0.3-1.5) → pad suave, cálido.
-        # Ratio 1:1 → suena a órgano; 3:2 → quinta harmónica sutil; 2:1 → más brillante.
-        # Técnica documentada en Andy Farnell "Designing Sound" y en la investigación de info.txt.
-        FM_RATIOS = {
-            # chord_set : (fm_ratio, mod_index_base, mod_index_lfo_depth)
-            'dark_station':  (0.5,  0.24, 0.08),
-            'arctic':        (0.5,  0.16, 0.06),  # frío, sin brillo tonal
-            'forest':        (0.75, 0.22, 0.08),  # cálido, verde
-            'deep_sea':      (0.5,  0.26, 0.10),  # profundo, oscuro
-            'orbital':       (0.5,  0.20, 0.07),  # soporte vital, no beep
-            'volcanic':      (0.5,  0.30, 0.12),  # denso, rugoso
-            'mountain':      (0.5,  0.18, 0.06),  # aire amplio sin silbido
-            'reactor':       (0.5,  0.24, 0.08),  # industrial oscuro
-            'desert':        (0.75, 0.20, 0.07),  # cálido, seco
-            'jungle':        (0.75, 0.22, 0.08),  # orgánico
-            'coastal':       (0.5,  0.18, 0.06),  # abierto, suave
-            'tundra':        (0.5,  0.14, 0.05),  # frío, amplio
-        }
-        fm_ratio, fm_idx_base, fm_lfo_depth = FM_RATIOS.get(
-            state.chord_set, (1.0, 0.50, 0.22))
-
-        # Perlin-like LFO: random walk suavizado para modulación orgánica
-        # (En vez del sin(0.07t) estático que se vuelve predecible y robótico)
-        dt = n / SR
-        noise_kick = self._perlin_rng.normal(0, 0.008)  # impulso aleatorio suave
-        self._perlin_vel += noise_kick
-        self._perlin_vel *= 0.992                        # amortiguamiento (spring)
-        self._perlin_val += self._perlin_vel * dt
-        self._perlin_val  = float(np.clip(self._perlin_val, -1.0, 1.0))
-        # Suavizado: interpola linealmente sobre el chunk
-        perlin_prev = self._perlin_val - self._perlin_vel * dt
-        perlin_lfo  = np.linspace(perlin_prev, self._perlin_val, n)
-
-        # Índice FM con LFO orgánico (el timbre "respira" suavemente)
-        fm_index = fm_idx_base + fm_lfo_depth * perlin_lfo
-
-        def _build_pad_fm(chord, t_vec, fm_ratio, fm_index):
-            """2-operator FM pad con 4 voces ligeramente detuneadas por nota.
-            Voz A: carrier fc, mod fm_ratio*fc
-            Voz B: carrier fc*1.002 (detune sutil → chorus natural)
-            """
-            out = np.zeros(len(t_vec))
-            for i, freq in enumerate(chord):
-                g = 0.140 if i == 0 else 0.110 / (i ** 0.5)
-                fm = freq * fm_ratio   # frecuencia del modulador
-                # Voz A: entonación central
-                mod_a = np.sin(2 * np.pi * fm * 0.9985 * t_vec)
-                car_a = np.sin(2 * np.pi * freq * 0.9975 * t_vec + fm_index * mod_a)
-                # Voz B: detune +2 cents para chorus natural sin coros digitales
-                mod_b = np.sin(2 * np.pi * fm * 1.0015 * t_vec)
-                car_b = np.sin(2 * np.pi * freq * 1.0025 * t_vec + fm_index * mod_b)
-                # Voz C: sub-octava muy sutil para calidez en bajos
-                sub_c = np.sin(2 * np.pi * (freq * 0.5) * t_vec) * 0.15
-                out += (car_a * 0.52 + car_b * 0.48) * g + sub_c * g * 0.18
-            return out
-
-        ch_cur  = chords[self.chord_idx % len(chords)]
-        ch_next = chords[(self.chord_idx + 1) % len(chords)]
-        fade_dur = min(18.0, self.chord_dur * 0.22)
-        pad       = _build_pad_fm(ch_cur,  t, fm_ratio, fm_index)
-        blend_pad = _build_pad_fm(ch_next, t, fm_ratio, fm_index)
-
-        ct_arr    = self.chord_t + (t - t[0])
-        blend_lin = np.clip((ct_arr - (self.chord_dur - fade_dur)) / fade_dur, 0.0, 1.0)
-        fade_out  = np.cos(blend_lin * np.pi * 0.5)
-        fade_in   = np.sin(blend_lin * np.pi * 0.5)
-        pad       = pad * fade_out + blend_pad * fade_in
-        # Saturación suave tipo tape (pre-boost + tanh + renormalización)
-        # Basado en la técnica documentada en info.txt: pre-filter boost + waveshaping
-        pad_driven = pad * 1.35
-        pad = np.tanh(pad_driven) / np.tanh(np.array(1.35)) * 0.80
-        pad *= 0.85 + 0.15 * (0.5 + 0.5 * perlin_lfo)   # amplitud respira con Perlin
-
-        self.chord_t += n / SR
-        if self.chord_t >= self.chord_dur:
-            self.chord_t -= self.chord_dur
-            self.chord_idx = (self.chord_idx + 1) % len(chords)
-            self.chord_dur = self._next_chord_duration()
-
-        # ── Sub-drone mejorado ───────────────────────────────────────────
-        # Drone con FM sutil: modulador a 0.5x la raíz (suboctava) — da calidez analógica
-        # y el vibrato usa el mismo Perlin LFO para que "respire" con el pad.
-        root_raw  = ch_cur[0] / 2.0
-        root_freq = max(root_raw, 55.0)
-        # Vibrato suave derivado del Perlin LFO (no sinético sino orgánico)
-        vibrato = 1.0 + 0.004 * perlin_lfo + 0.002 * np.sin(2 * np.pi * 0.03 * t)
-        sin_d   = np.sin(2 * np.pi * root_freq * vibrato * t)
-        # Mod suave en la raíz (FM index 0.2, modulador a media frecuencia)
-        mod_sub = np.sin(2 * np.pi * root_freq * 0.5 * t) * 0.20
-        fm_d    = np.sin(2 * np.pi * root_freq * vibrato * t + mod_sub)
-        drone   = sin_d * 0.72 + fm_d * 0.28
-        drone  *= np.clip(t / 15.0, 0.0, 1.0) * state.sub_gain
-
-        # ── Viento filtrado (biquad bandpass en cascada ultra-rápido) ──
-        prof = SCENE_PROFILES.get(state.scene, SCENE_PROFILES[DEFAULT_SCENE])
-
-        # ── [NEW] Extracción de ganancias de nuevos sintetizadores ──
-        rcs_gain       = prof.get('rcs_gain', 0.0)
-        telemetry_gain = prof.get('telemetry_gain', 0.0)
-        glacier_gain   = prof.get('glacier_gain', 0.0)
-        wire_gain      = prof.get('wire_gain', 0.0)
-        drops_gain     = prof.get('drops_gain', 0.0)
-        sway_gain      = prof.get('sway_gain', 0.0)
-        subcreak_gain  = prof.get('subcreak_gain', 0.0)
-        sonar_gain     = prof.get('sonar_gain', 0.0)
-        avalanche_gain = prof.get('avalanche_gain', 0.0)
-        harp_gain      = prof.get('harp_gain', 0.0)
-        sand_gain      = prof.get('sand_gain', 0.0)
-        magma_gain     = prof.get('magma_gain', 0.0)
-        steam_gain     = prof.get('steam_gain', 0.0)
-        geiger_gain    = prof.get('geiger_gain', 0.0)
-        coolant_gain   = prof.get('coolant_gain', 0.0)
-        valve_gain     = prof.get('valve_gain', 0.0)
-        thunder_gain   = prof.get('thunder_gain', 0.0)
-        wind_gain_mul = prof['wind_gain']
-        fc_mean = 300 + 1800 * state.brightness
-        
-        noise = self.wind_rng.uniform(-1.0, 1.0, n)
-        if self.wind_zi1 is None:
-            self.wind_zi1 = np.zeros(2)
-            self.wind_zi2 = np.zeros(2)
-            
-        b, a = biquad_bandpass(fc_mean, 0.65, SR)
-        y1, self.wind_zi1 = sps.lfilter(b, a, noise, zi=self.wind_zi1)
-        wind_out, self.wind_zi2 = sps.lfilter(b, a, y1, zi=self.wind_zi2)
-        # Factor 2.8→1.1: el viento era demasiado dominante y enmascaraba pad/melodía
-        wind = wind_out * (0.030 + state.energy * 0.055) * wind_gain_mul * 1.1
-
-        # ── Melodías Ambientales Procedimentales ──
-        # Genera frases de varias notas espaciadas para crear movimiento melódico real
-        mel = np.zeros(n)
-        t_samples = self.t_abs + np.arange(n) / SR
-
-        melody_gap = self.mel_rng.uniform(30.0, 60.0)
-        if not self.active_phrase and (self.t_abs - self.last_note) > melody_gap:
-            num_notes = self.mel_rng.randint(3, 6)
-            phrase = []
-            t_offset = self.mel_rng.uniform(1.0, 3.0)
-            for _ in range(num_notes):
-                freq = self.mel_rng.choice(notes_n)
-                # Ocasionalmente baja una octava
-                if self.mel_rng.random() < 0.25:
-                    freq *= 0.5
-                dur = self.mel_rng.uniform(3.5, 7.0)
-                atk = self.mel_rng.uniform(1.0, 2.5)
-                rel = self.mel_rng.uniform(2.0, 4.5)
-                # Guardamos: start_time, freq, dur, attack, release, lp_state
-                phrase.append((self.t_abs + t_offset, freq, dur, atk, rel, 0.0))
-                t_offset += dur * self.mel_rng.uniform(0.6, 1.0) # ligero solape o separación
-            self.active_phrase = phrase
-            self.last_note = self.t_abs
-
-        still = []
-        for item in self.active_phrase:
-            start_n, freq_n, dur_n, ATTACK, RELEASE, lp_state = item
-            total = dur_n + RELEASE
-            if start_n >= self.t_abs + n / SR:
-                still.append(item); continue
-            if start_n + total <= self.t_abs:
-                continue
-
-            age = t_samples - start_n
-            mask = (age > 0) & (age < total)
-            if not np.any(mask):
-                if start_n + total > self.t_abs + n / SR:
-                    still.append(item)
-                continue
-
-            a = age[mask]
-            # Envolvente: fade-in sinusoidal + sustain plano + fade-out sinusoidal
-            env = np.where(
-                a < ATTACK,
-                np.sin(np.pi * 0.5 * a / ATTACK),           # sube suavemente
-                np.where(
-                    a < dur_n,
-                    1.0,                                      # plano
-                    np.cos(np.pi * 0.5 * (a - dur_n) / RELEASE)  # baja suavemente
-                )
-            )
-
-            # Tres osciladores detuneados para dar calidez analógica
-            phase_a = 2 * np.pi * freq_n * 0.998 * a
-            phase_b = 2 * np.pi * freq_n * 1.002 * a
-            phase_c = 2 * np.pi * freq_n * 0.5   * a   # suboctava
-            wave = (np.sin(phase_a) * 0.45 +
-                    np.sin(phase_b) * 0.45 +
-                    np.sin(phase_c) * 0.10)
-
-            # Filtro paso bajo suave para redondear el tono
-            b_lp, a_lp = [0.06], [1.0, -0.94]
-            zi = np.array([lp_state])
-            filtered, zf = sps.lfilter(b_lp, a_lp, wave * env, zi=zi)
-            lp_state = float(zf[0])
-
-            # Multiplicador aumentado de 0.038 a 0.08 para darles mayor protagonismo
-            mel[mask] += filtered * 0.450
-            if start_n + total > self.t_abs + n / SR:
-                still.append((start_n, freq_n, dur_n, ATTACK, RELEASE, lp_state))
-
-        self.active_phrase = still
-
-        # ── Campanas Karplus-Strong ──────────────────────────────────────────
-        # Algoritmo de modelado físico: cuerda pulsada / metal resonante.
-        bells = np.zeros(n)
-        bell_gain = prof['bell_gain']
-        if bell_gain > 0:
-            bell_chance = 0.0035 * state.density
-            min_gap = max(90.0, 1.5 / max(bell_chance, 0.001))
-            if (self.t_abs - self.last_bell) > min_gap and self.bell_rng.random() < bell_chance:
-                freq_b = self.bell_rng.choice(bells_n)
-                amp_b  = self.bell_rng.uniform(0.004, 0.014) * state.density * bell_gain
-                # ── Karplus-Strong: modelado físico ──
-                # Técnica de info.txt (tao_synth, tones). Genera el espectro
-                # armónico naturalmente, sin necesidad de sumar parciales.
-                ks_n    = int(7.0 * SR)
-                period  = max(4, int(round(SR / max(freq_b, 20.0))))
-                rng_ks  = np.random.RandomState(int(self.t_abs * 1000) % 2**31)
-                work    = rng_ks.uniform(-1.0, 1.0, period).astype(np.float64)
-                decay_f = 0.9994  # Q ≈ 230 — muy resonante (metal/madera)
-                out_ks  = np.empty(ks_n, dtype=np.float64)
-                for _s in range(0, ks_n, period):
-                    _e = min(_s + period, ks_n)
-                    out_ks[_s:_e] = work[:_e-_s]
-                    nw      = np.empty_like(work)
-                    nw[0]   = decay_f * 0.5 * (work[-1] + work[0])
-                    nw[1:]  = decay_f * 0.5 * (work[:-1] + work[1:])
-                    work    = nw
-                self.bell_active.append((self.t_abs, out_ks * amp_b))
-                self.last_bell = self.t_abs
-
-            t_samples = self.t_abs + np.arange(n) / SR
-            still = []
-            for (ts, ks_buf) in self.bell_active:
-                start_i = max(0, int((self.t_abs - ts) * SR))
-                end_i   = min(len(ks_buf), start_i + n)
-                if start_i < len(ks_buf):
-                    chunk_len = end_i - start_i
-                    offset = n - chunk_len  # alineado al final del chunk si comienza tarde
-                    start_chunk = max(0, int((ts - self.t_abs) * SR))
-                    take = ks_buf[start_i:end_i]
-                    bells[start_chunk:start_chunk + len(take)] += take
-                if ts + len(ks_buf) / SR > self.t_abs + n / SR:
-                    still.append((ts, ks_buf))
-            self.bell_active = still
-
-        # ── Sonar ──
-        period = 12.0 + (1.0 - state.energy) * 18.0
-        pt  = t % period
-        mask = pt < 0.30
-        sonar = np.zeros(n)
-        sonar[mask] = np.sin(pt[mask]*2*np.pi*state.sonar_freq) * np.exp(-20.0*pt[mask]) * 0.008
-
-        ambient = self.ambient.generate_chunk(self.t_abs, n, state)
-
-        synth_layers = {
-            "pad": float(np.sqrt(np.mean((pad * 0.07) ** 2))),
-            "drone": float(np.sqrt(np.mean((drone * 0.10) ** 2))),
-            "wind": float(np.sqrt(np.mean((wind * 0.24) ** 2))),
-            "drone_note": float(np.sqrt(np.mean((mel * 0.0) ** 2))),
-            "bells": float(np.sqrt(np.mean((bells * 0.06) ** 2))),
-            "ambient": float(np.sqrt(np.mean((ambient * 1.00) ** 2))),
-        }
-        dominant = max(synth_layers, key=synth_layers.get)
-        if dominant == "ambient":
-            dominant = getattr(self.ambient, "last_layer", "ambient")
-        self.last_layer = dominant
-
-        # ── Mezcla rebalanceada ──────────────────────────────────────────
-        # Filosofía: pad/melodía son el primer plano musical (textura harmónica).
-        # Ambiente/viento son el fondo texturizado — no deben tapar lo tonal.
-        mix = (
-            pad     * 0.45 +   # pad warm
-            drone   * 0.38 +   # sub-drone
-            wind    * 0.22 +   # viento
-            mel     * 0.75 +   # melodía
-            bells   * 0.30 +   # campanas plucks
-            sonar   * 0.12 +   # sonar
-            ambient * 1.00     # cama ambiental
-        )
-
-        # El limitador e integrador se aplican al final del master bus para mantener dinámicas
-
-        if self.startup_fade_left > 0:
-            fade_elapsed = STARTUP_FADE_SECONDS - self.startup_fade_left
-            env = np.clip((fade_elapsed + np.arange(n) / SR) / STARTUP_FADE_SECONDS, 0.0, 1.0)
-            mix *= env
-            self.startup_fade_left = max(0.0, self.startup_fade_left - n / SR)
-        self.t_abs += n / SR
-        return mix
-
-
-# ──────────────────────────────────────────────────────────
-# Capas de ambiente
-# ──────────────────────────────────────────────────────────
-
-# ── Importar módulos de generadores ─────────────────────────────────────────
-from generators.gen_base import BaseGeneratorsMixin
-from generators.gen_space import SpaceGeneratorsMixin
-from generators.gen_polar import PolarGeneratorsMixin
-from generators.gen_nature import NatureGeneratorsMixin
-from generators.gen_submarine import SubmarineGeneratorsMixin
-from generators.gen_industrial import IndustrialGeneratorsMixin
-from generators.gen_urban import UrbanGeneratorsMixin
-from generators.gen_diffusion import MonoDiffuser
-
-class AmbientSounds(BaseGeneratorsMixin, SpaceGeneratorsMixin, PolarGeneratorsMixin, NatureGeneratorsMixin, SubmarineGeneratorsMixin, IndustrialGeneratorsMixin, UrbanGeneratorsMixin):
-    # Fonemas para síntesis de voz del walkie-talkie
-    PHONEMES = {
-        'A':   {'buzz': 1.0, 'noise': 0.0, 'formants': [730, 1090, 2440], 'bandwidths': [80, 90, 150]},
-        'E':   {'buzz': 1.0, 'noise': 0.0, 'formants': [530, 1840, 2480], 'bandwidths': [60, 90, 150]},
-        'I':   {'buzz': 1.0, 'noise': 0.0, 'formants': [270, 2290, 3010], 'bandwidths': [50, 100, 200]},
-        'O':   {'buzz': 1.0, 'noise': 0.0, 'formants': [570, 840, 2410],  'bandwidths': [70, 80, 150]},
-        'U':   {'buzz': 1.0, 'noise': 0.0, 'formants': [300, 870, 2240],  'bandwidths': [50, 80, 100]},
-        'M':   {'buzz': 1.0, 'noise': 0.0, 'formants': [280, 950, 2300],  'bandwidths': [40, 150, 300], 'amp_scale': 0.4},
-        'N':   {'buzz': 1.0, 'noise': 0.0, 'formants': [280, 1300, 2300], 'bandwidths': [40, 150, 300], 'amp_scale': 0.4},
-        'R':   {'buzz': 1.0, 'noise': 0.0, 'formants': [350, 1060, 1500], 'bandwidths': [60, 100, 120]},
-        'L':   {'buzz': 1.0, 'noise': 0.0, 'formants': [380, 1200, 2500], 'bandwidths': [60, 100, 150]},
-        'V':   {'buzz': 0.6, 'noise': 0.3, 'formants': [250, 900, 2000],  'bandwidths': [100, 200, 300], 'amp_scale': 0.3},
-        'Z':   {'buzz': 0.5, 'noise': 0.5, 'formants': [250, 1800, 2800], 'bandwidths': [100, 200, 300], 'amp_scale': 0.4},
-        'S':   {'buzz': 0.0, 'noise': 1.0, 'formants': [4000, 6000, 8000],'bandwidths': [1000, 1500, 2000], 'amp_scale': 0.6},
-        'SH':  {'buzz': 0.0, 'noise': 1.0, 'formants': [2500, 3500, 5000],'bandwidths': [800, 1000, 1500], 'amp_scale': 0.7},
-        'F':   {'buzz': 0.0, 'noise': 1.0, 'formants': [1500, 3000, 6000],'bandwidths': [1000, 2000, 3000], 'amp_scale': 0.4},
-        'P':   {'buzz': 0.0, 'noise': 0.6, 'formants': [500, 1500, 3000], 'bandwidths': [200, 400, 800], 'amp_scale': 0.7},
-        'T':   {'buzz': 0.0, 'noise': 0.7, 'formants': [1000, 2500, 4000],'bandwidths': [400, 800, 1200], 'amp_scale': 0.7},
-        'K':   {'buzz': 0.0, 'noise': 0.8, 'formants': [1500, 2000, 3500],'bandwidths': [300, 600, 1000], 'amp_scale': 0.8},
-        'SIL': {'buzz': 0.0, 'noise': 0.0, 'formants': [500, 1500, 2500], 'bandwidths': [500, 500, 500], 'amp_scale': 0.0},
-    }
-
-    # Frases de radio sintetizadas
-    PHRASE_RECIPES = {
-        "ROGER": [
-            ('SIL', 0.08), ('R', 0.08), ('O', 0.14), ('Z', 0.08), ('E', 0.12), ('R', 0.14), ('SIL', 0.10)
-        ],
-        "COPY_THAT": [
-            ('SIL', 0.08), ('K', 0.06), ('O', 0.14), ('P', 0.07), ('I', 0.12), ('SIL', 0.06),
-            ('T', 0.05), ('A', 0.14), ('T', 0.08), ('SIL', 0.10)
-        ],
-        "TEN_FOUR": [
-            ('SIL', 0.08), ('T', 0.06), ('E', 0.14), ('N', 0.14), ('SIL', 0.10),
-            ('F', 0.09), ('O', 0.16), ('R', 0.16), ('SIL', 0.10)
-        ],
-        "BASE_COPY": [
-            ('SIL', 0.08), ('M', 0.08), ('E', 0.14), ('I', 0.09), ('S', 0.12), ('SIL', 0.08),
-            ('K', 0.06), ('O', 0.12), ('P', 0.06), ('I', 0.12), ('SIL', 0.10)
-        ],
-        "SECTOR_FOUR_CLEAR": [
-            ('SIL', 0.08), ('S', 0.10), ('E', 0.12), ('K', 0.06), ('T', 0.05), ('O', 0.10), ('R', 0.09), ('SIL', 0.06),
-            ('F', 0.09), ('O', 0.14), ('R', 0.12), ('SIL', 0.10),
-            ('K', 0.06), ('L', 0.08), ('I', 0.16), ('R', 0.14), ('SIL', 0.10)
-        ],
-        "SYSTEM_NOMINAL": [
-            ('SIL', 0.08), ('S', 0.10), ('I', 0.09), ('S', 0.09), ('T', 0.05), ('E', 0.10), ('M', 0.12), ('SIL', 0.08),
-            ('N', 0.09), ('O', 0.12), ('M', 0.10), ('I', 0.08), ('N', 0.09), ('A', 0.10), ('L', 0.14), ('SIL', 0.10)
-        ],
-        "ATMOSPHERE_STABLE": [
-            ('SIL', 0.08), ('A', 0.12), ('T', 0.05), ('M', 0.09), ('O', 0.12), ('S', 0.09),
-            ('F', 0.09), ('I', 0.12), ('R', 0.10), ('SIL', 0.08),
-            ('S', 0.10), ('T', 0.05), ('E', 0.12), ('I', 0.08), ('M', 0.08), ('L', 0.10), ('SIL', 0.10)
-        ],
-        "ANOMALY_DETECTED": [
-            ('SIL', 0.08), ('A', 0.12), ('N', 0.09), ('O', 0.12), ('M', 0.09), ('A', 0.10),
-            ('L', 0.09), ('I', 0.12), ('SIL', 0.08),
-            ('T', 0.05), ('I', 0.09), ('T', 0.05), ('E', 0.12), ('K', 0.06), ('T', 0.05), ('E', 0.10), ('T', 0.06), ('SIL', 0.10)
-        ],
-    }
-
-    def __init__(self, start_t=0.0):
-        self.rng = random.Random(9999)
-        self.last_layer = "ambient"
-
-        # ── Radio walkie-talkie ──
-        self.radio_next_start = start_t + 45.0
-        self.radio_end        = 0.0
-        self.radio_active     = False
-        self.radio_trans_dur  = 0.0
-        self.radio_buffer     = None
-
-        # ── Ventiladores ──
-        self.fan_zi1 = None; self.fan_zi2 = None
-        self.fan_rng = np.random.RandomState(7)
-        nyq = SR / 2.0
-        def make_fan_sos(fc, bw=40):
-            lo = np.clip((fc - bw/2) / nyq, 0.005, 0.490)
-            hi = np.clip((fc + bw/2) / nyq, lo + 0.005, 0.495)
-            return sps.butter(2, [lo, hi], btype='band', output='sos')
-        self.fan_sos1 = make_fan_sos(112)
-        self.fan_sos2 = make_fan_sos(187)
-
-        # ── Pasos ──
-        self.step_next  = start_t + 18.0
-        self.step_queue = []
-
-        # ── Dings metálicos ──
-        self.ding_next   = start_t + 38.0
-        self.ding_active = []
-
-        # ── Carrito ──
-        self.cart_next   = start_t + 180.0
-        self.cart_active = None
-
-        # ── Agua (bosque/submarino) ──
-        self.water_rng = np.random.RandomState(42)
-        self.water_zi  = None
-        self.bubble_queue = []      # [(t_abs, freq, amp, decay)]
-        self.bubble_next  = start_t + 6.0
-        self.water_lfo_t  = 0.0
-        lo_w = np.clip(250 / nyq, 0.005, 0.490)
-        hi_w = np.clip(620 / nyq, lo_w + 0.01, 0.495)
-        self.water_sos = sps.butter(2, [lo_w, hi_w], btype='band', output='sos')
-
-        # ── Knock / golpe puerta ──
-        self.knock_next   = start_t + 240.0
-        self.knock_queue  = []
-        self.knock_hit_i  = 0
-
-        # ── Lluvia ──
-        self.rain_rng   = np.random.RandomState(77)
-        self.rain_zi1   = None
-        self.rain_zi2   = None
-        self.rain_lfo_t = 0.0
-        self.drop_queue = []
-        self.drop_next  = start_t + 3.0
-        # Precalcular filtros de lluvia
-        self.rain_sos1 = sps.butter(4, [np.clip(200/nyq, 0.005, 0.49), np.clip(900/nyq, 0.01, 0.49)], btype='band', output='sos')
-        self.rain_sos2 = sps.butter(4, [np.clip(900/nyq, 0.01, 0.49), np.clip(4000/nyq, 0.02, 0.49)], btype='band', output='sos')
-
-        # Precalcular filtros de nieve
-        self.snow_sos1 = sps.butter(4, [np.clip(80/nyq, 0.005, 0.49), np.clip(800/nyq, 0.01, 0.49)], btype='band', output='sos')
-        self.snow_sos2 = sps.butter(3, [np.clip(800/nyq, 0.01, 0.49), np.clip(3000/nyq, 0.02, 0.49)], btype='band', output='sos')
-        self.snow_zi1  = None
-        self.snow_zi2  = None
-
-        # ── Grilllos nocturnos procedimentales (Múltiples grillos en coro espacial) ──
-        self.cricket_schedulers = [
-            {'next': start_t + 8.0,  'rng': random.Random(1001), 'fc': 1650, 'pulses': 3},
-            {'next': start_t + 16.0, 'rng': random.Random(1002), 'fc': 1850, 'pulses': 4},
-            {'next': start_t + 24.0, 'rng': random.Random(1003), 'fc': 1450, 'pulses': 2},
-        ]
-        self.cricket_active_chirps = []
-
-        # ── Truenos procedimentales (Físicamente realistas) ──
-        self.thunder_next   = start_t + 60.0
-        self.thunder_active = None
-        self.thunder_rumble_zi = None
-
-        # ── Hum eléctrico (50 Hz + armónicos) ──
-        self.hum_ph = [0.0, 0.0, 0.0, 0.0]   # fases para 50/100/150/200 Hz
-
-        # ── Blizzard (viento en ráfagas) ──
-        self.gust_rng   = np.random.RandomState(13)
-        self.gust_zi1   = None
-        self.gust_zi2   = None
-        self.gust_lfo_t = 0.0
-        self.whistle_rng = np.random.RandomState(1313)
-        self.whistle_zi  = [np.zeros(2), np.zeros(2), np.zeros(2)]
-        self.whistle_real_zi = np.zeros(2)
-        self.chain_next  = start_t + 10.0
-        self.chain_active = []
-        # Precalcular filtros de viento blizzard
-        self.wind_sos1 = sps.butter(4, [np.clip(40/nyq, 0.005, 0.49), np.clip(200/nyq, 0.005, 0.49)], btype='band', output='sos')
-        self.wind_sos2 = sps.butter(4, [np.clip(150/nyq, 0.005, 0.49), np.clip(500/nyq, 0.01, 0.49)], btype='band', output='sos')
-
-        # ── Crujido estructural ──
-        self.creak_next  = start_t + 90.0
-        self.creak_queue = []
-        self.creak_rng   = random.Random(31337)
-        self.corona_next  = start_t + 2.0
-        self.corona_queue = []
-        self.corona_rng   = random.Random(424242)
-        self.corona_np_rng = np.random.RandomState(424242)
-        self.corona_sos = sps.butter(3, [np.clip(3200 / nyq, 0.005, 0.490), np.clip(12000 / nyq, 0.005 + 0.01, 0.495)], btype='band', output='sos')
-        self.corona_zi = None
-        self.spark_zi = None
-        self.spark_hp_sos = sps.butter(2, np.clip(3000 / nyq, 0.005, 0.490), btype='highpass', output='sos')
-        self.spark_hp_zi = None
-
-        # ── Murmullo distante ciudad/maquinaria ──
-        self.city_rng = np.random.RandomState(55)
-        # Precalcular filtro de ciudad
-        lo_c = np.clip(55 / nyq, 0.005, 0.490)
-        hi_c = np.clip(230 / nyq, lo_c + 0.01, 0.495)
-        self.city_sos = sps.butter(2, [lo_c, hi_c], btype='band', output='sos')
-        self.city_zi  = None
-
-        # ── Cassette hiss nocturno ──
-        self.cass_rng = np.random.RandomState(88)
-        # Precalcular filtro de cassette
-        lo_ca = np.clip(3800 / nyq, 0.005, 0.490)
-        hi_ca = np.clip(11000 / nyq, lo_ca + 0.01, 0.495)
-        self.cass_sos = sps.butter(2, [lo_ca, hi_ca], btype='band', output='sos')
-        self.cass_zi  = None
-
-        # ── EMF sweep ──
-        self.emf_rng    = np.random.RandomState(17)
-        self.emf_next   = 0.0
-        self.emf_queue  = []
-
-        # ── Sirena de contención ──
-        self.siren_rng    = np.random.RandomState(23)
-        self.siren_next   = 80.0
-        self.siren_active = None
-        # Precalcular filtro de sirena
-        lo_s = np.clip(120 / nyq, 0.005, 0.490)
-        hi_s = np.clip(480 / nyq, lo_s + 0.01, 0.495)
-        self.siren_sos = sps.butter(4, [lo_s, hi_s], btype='band', output='sos')
-        self.siren_zi  = None
-
-        # ── Respiración mecánica ──
-        self.breath_rng = np.random.RandomState(37)
-        self.breath_ts  = 0.0
-        # Precalcular filtro de respiración
-        lo_b = np.clip(150 / nyq, 0.005, 0.490)
-        hi_b = np.clip(600 / nyq, lo_b + 0.01, 0.495)
-        self.breath_sos = sps.butter(3, [lo_b, hi_b], btype='band', output='sos')
-        self.breath_zi  = None
-
-        # ── Morse distante ──
-        self.morse_rng  = np.random.RandomState(53)
-        self.morse_seq  = []
-        self.morse_next = 45.0
-
-        # ── Anomalía de tono ──
-        self.anomaly_rng    = np.random.RandomState(61)
-        self.anomaly_ph     = 0.0
-        self.anomaly_f      = 220.0
-        self.anomaly_tf     = 220.0
-        self.anomaly_amp    = 0.0
-        self.anomaly_tamp   = 0.0
-        self.anomaly_ts     = 0.0
-        self.anomaly_dur    = 0.0
-        self.anomaly_next   = 30.0
-        self.anomaly_active = False
-
-        # ── [NEW] Estado de nuevos sonidos inmersivos ──
-        # RCS
-        self.rcs_rng = np.random.RandomState(8081)
-        self.rcs_next = start_t + 15.0
-        self.rcs_active = None
-        # Telemetry
-        self.telemetry_rng = np.random.RandomState(8082)
-        self.telemetry_next = start_t + 8.0
-        self.telemetry_queue = []
-        # Glacier
-        self.glacier_rng = np.random.RandomState(8083)
-        self.glacier_next = start_t + 40.0
-        self.glacier_active = None
-        # Wire Whistle
-        self.wire_rng = np.random.RandomState(8084)
-        self.wire_zi1 = None
-        self.wire_zi2 = None
-        # Metal Drops
-        self.drops_rng = np.random.RandomState(8085)
-        self.drops_next = start_t + 0.1
-        self.drops_queue = []
-        # Tree Sway (multicapa: zi1=hojas peque, zi2=hojas grandes, zi3=ramas)
-        self.sway_rng = np.random.RandomState(8086)
-        self.sway_zi = [np.zeros(2), np.zeros(2), np.zeros(2)]
-        # Sub Creak (hull groan con glide de frecuencia)
-        self.subcreak_rng = np.random.RandomState(8087)
-        self.subcreak_next = start_t + 20.0
-        self.subcreak_active = None
-        # Sonar Ping
-        self.sonar_ping_rng = np.random.RandomState(8088)
-        self.sonar_ping_next = start_t + 4.0
-        self.sonar_ping_active = []
-        # Avalanche
-        self.avalanche_rng = np.random.RandomState(8089)
-        self.avalanche_next = start_t + 85.0
-        self.avalanche_active = None
-        # Tension Harp
-        self.harp_rng = np.random.RandomState(8090)
-        self.harp_zi = [None, None, None, None]
-        # Sandstorm Gust (dust devils con eventos discretos + fondo)
-        self.sand_rng = np.random.RandomState(8091)
-        self.sand_zi = [np.zeros(2)]   # [zi_bg]
-        self.sand_queue = []           # [(ts, dur, fc, amp)]
-        self.sand_next  = start_t + 2.0
-        self.sand_rock_next = start_t + 25.0
-        # ── Volcánica ──────────────────────────────────────────────
-        # Magma Rumble: sub-bass pulsante continuo (15-45Hz)
-        self.magma_rng = np.random.RandomState(8092)
-        self.magma_zi  = np.zeros(2)
-        self.magma_bubble_next = start_t + 5.0
-        self.magma_bubble_queue = []
-        # Steam Vent: eventos de vapor/gas a presión
-        self.steam_rng  = np.random.RandomState(8093)
-        self.steam_next = start_t + 6.0
-        self.steam_active = None   # (ts, dur, fc, amp)
-        self.steam_zi   = np.zeros(2)
-        # ── Reactor ────────────────────────────────────────────────
-        # Geiger: clicks de contador por proceso de Poisson
-        self.geiger_rng = np.random.RandomState(8094)
-        self.geiger_clicks = []    # lista de (ts_click, amp)
-        self.geiger_next = start_t + self._geiger_interarrival()
-        # Coolant Flow: flujo de refrigerante bajo presión (continuo)
-        self.coolant_rng = np.random.RandomState(8095)
-        self.coolant_zi  = np.zeros(2)
-        # Pressure Valve: ráfagas de vapor de válvulas de presión
-        self.valve_rng  = np.random.RandomState(8096)
-        self.valve_next = start_t + 12.0
-        self.valve_active = None   # (ts, dur, fc, amp)
-        self.valve_zi   = np.zeros(2)
-        # ── Tormenta ───────────────────────────────────────────────
-        # Thunder: truenos con cola de reverb larga
-        self.thunder_rng  = np.random.RandomState(8097)
-        self.thunder_next = start_t + 10.0
-        self.thunder_active = None   # (ts, dur, amp)
-        self.thunder_zi   = np.zeros(2)
-        # ── Urban / Noche ──────────────────────────────────────────
-        # Perros: 2 instancias independientes
-        self.dog_rng   = [random.Random(9101), random.Random(9102)]
-        self.dog_next  = [start_t + self.dog_rng[0].uniform(15.0, 40.0),
-                          start_t + self.dog_rng[1].uniform(30.0, 80.0)]
-        self.dog_queue = []
-        # Tráfico: rumble continuo + pases de autos
-        self.traffic_rng = np.random.RandomState(9103)
-        self.traffic_zi  = np.zeros(2)
-        self.car_rng     = random.Random(9104)
-        self.car_next    = start_t + self.car_rng.uniform(8.0, 25.0)
-        self.car_queue   = []
-        # Motos
-        self.moto_rng  = random.Random(9105)
-        self.moto_next = start_t + self.moto_rng.uniform(30.0, 90.0)
-        self.moto_queue = []
-        # Sapos: coro grave y pausado, más fondo natural que chirrido protagonista.
-        _frog_seed = random.Random(9106)
-        self.frog_params = [
-            (_frog_seed.uniform(420, 620),  _frog_seed.uniform(0.8, 1.6), _frog_seed.uniform(0, 6.28), _frog_seed.uniform(0.0020, 0.0060)),
-            (_frog_seed.uniform(520, 760),  _frog_seed.uniform(1.0, 1.9), _frog_seed.uniform(0, 6.28), _frog_seed.uniform(0.0018, 0.0052)),
-            (_frog_seed.uniform(700, 980),  _frog_seed.uniform(1.2, 2.2), _frog_seed.uniform(0, 6.28), _frog_seed.uniform(0.0014, 0.0046)),
-            (_frog_seed.uniform(450, 680),  _frog_seed.uniform(0.9, 1.8), _frog_seed.uniform(0, 6.28), _frog_seed.uniform(0.0020, 0.0055)),
-            (_frog_seed.uniform(620, 900),  _frog_seed.uniform(1.3, 2.4), _frog_seed.uniform(0, 6.28), _frog_seed.uniform(0.0012, 0.0040)),
-            (_frog_seed.uniform(500, 740),  _frog_seed.uniform(1.0, 2.0), _frog_seed.uniform(0, 6.28), _frog_seed.uniform(0.0016, 0.0048)),
-        ]
-        self.frog_zi = [np.zeros(2) for _ in self.frog_params]
-        self.frog_lp_zi = np.zeros(2)
-        # Hojas: ruido de alta frecuencia
-        self.leaves_rng  = np.random.RandomState(9107)
-        self.leaves_zi1  = np.zeros(2)
-        self.leaves_zi2  = np.zeros(2)
-
-    def _thunder_chunk(self, t_abs, n, rain_intensity):
-        """Truenos físicamente modelados por distancia con delay luz-sonido y ecos."""
-        if rain_intensity < 0.35:
-            return np.zeros(n)
-            
+    HAVE_PEDALBOARD = False
+
+SR = 44100
+SCENE_FILE = "/tmp/star_scene.txt"
+AUDIO_DIR = pathlib.Path("/tmp/star_lofi_buffer")
+CHUNK_SECONDS = 4
+CHUNK_SAMPLES = SR * CHUNK_SECONDS
+
+def midi_to_freq(note: float) -> float:
+    return 440.0 * (2.0 ** ((note - 69.0) / 12.0))
+
+# ─────────────────────────────────────────────────────────────
+# 1. GENERADORES DE PERCUSIÓN MULTIMODAL CON ALTA DIVERSIDAD
+# ─────────────────────────────────────────────────────────────
+
+def synth_kick(variant: int = 0) -> np.ndarray:
+    """4 tipos de bombos lo-fi:
+       0: Sub 808 suave y profundo.
+       1: Acústico lo-fi con golpe de maza de fieltro.
+       2: Bombo saturado de cinta analógica (muffled tape).
+       3: Punchy boombap seco y compacto.
+    """
+    if variant == 0:  # Sub 808 suave
+        dur = 0.40
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        f_env = 48.0 + 35.0 * np.exp(-t * 26.0)
+        phase = 2.0 * np.pi * np.cumsum(f_env) / SR
+        body = np.sin(phase) * np.exp(-t * 7.5)
+        sat = np.tanh(body * 1.2)
+        b, a = sps.butter(2, 180 / (SR / 2), btype='low')
+        return sps.lfilter(b, a, sat) * 0.90
+
+    elif variant == 1:  # Fieltro acústico
+        dur = 0.32
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        imp_len = int(0.010 * SR)
+        impact = np.random.normal(0, 1, imp_len) * np.exp(-np.linspace(0, 12, imp_len))
+        b_imp, a_imp = sps.butter(2, [180 / (SR / 2), 850 / (SR / 2)], btype='band')
+        impact_f = sps.lfilter(b_imp, a_imp, impact) * 0.25
+        f_env = 55.0 + 40.0 * np.exp(-t * 30.0)
+        phase = 2.0 * np.pi * np.cumsum(f_env) / SR
+        body = (np.sin(phase) + 0.12 * np.sin(2.0 * phase)) * np.exp(-t * 11.0)
         out = np.zeros(n)
-        
-        if self.thunder_active is None and t_abs >= self.thunder_next:
-            dist = self.rng.uniform(0.6, 5.5)
-            delay = dist / 0.343
-            crack_amp = 0.05 * (1.0 / dist) * rain_intensity if dist < 3.0 else 0.0
-            rumble_amp = self.rng.uniform(0.045, 0.095) * rain_intensity
-            rumble_dur = self.rng.uniform(7.0, 14.0)
-            fc = float(np.clip(160.0 - 22.0 * dist, 45.0, 150.0))
+        out[:imp_len] += impact_f
+        out += body
+        sat = np.tanh(out * 1.3)
+        b_lp, a_lp = sps.butter(2, 3500 / (SR / 2), btype='low')
+        return sps.lfilter(b_lp, a_lp, sat) * 0.92
+
+    elif variant == 2:  # Muffled tape kick
+        dur = 0.28
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        f_env = 42.0 + 25.0 * np.exp(-t * 20.0)
+        phase = 2.0 * np.pi * np.cumsum(f_env) / SR
+        body = np.sin(phase) * np.exp(-t * 9.0)
+        tape_noise = np.random.normal(0, 0.05, n) * np.exp(-t * 15.0)
+        sig = (body + tape_noise)
+        sat = np.tanh(sig * 1.6)
+        b, a = sps.butter(2, 1600 / (SR / 2), btype='low')
+        return sps.lfilter(b, a, sat) * 0.88
+
+    else:  # Punchy dry boombap
+        dur = 0.25
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        f_env = 58.0 + 50.0 * np.exp(-t * 35.0)
+        phase = 2.0 * np.pi * np.cumsum(f_env) / SR
+        body = np.sin(phase) * np.exp(-t * 14.0)
+        sat = np.tanh(body * 1.5)
+        b, a = sps.butter(2, 4000 / (SR / 2), btype='low')
+        return sps.lfilter(b, a, sat) * 0.95
+
+
+def synth_rimshot(variant: int = 0) -> np.ndarray:
+    """4 tipos de cajas / rims:
+       0: Cross-stick de madera con resonancia natural.
+       1: Brushed snare con barrido suave de escobilla.
+       2: Tape clap / chasquido vintage multicapa.
+       3: Rimshot apagado y seco (mellow click).
+    """
+    if variant == 0:  # Cross-stick de madera
+        dur = 0.16
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        modes = [(430.0, 0.40, 32.0), (890.0, 0.35, 48.0), (1700.0, 0.22, 68.0), (2900.0, 0.12, 90.0)]
+        wood = np.zeros(n)
+        for freq, amp, decay in modes:
+            wood += amp * np.sin(2.0 * np.pi * freq * t) * np.exp(-t * decay)
+        wire_len = int(0.09 * SR)
+        wire_noise = np.random.normal(0, 1, wire_len)
+        b, a = sps.butter(2, [1400 / (SR / 2), 6000 / (SR / 2)], btype='band')
+        wire = sps.lfilter(b, a, wire_noise) * np.exp(-np.linspace(0, 28, wire_len)) * 0.16
+        out = wood.copy()
+        out[:wire_len] += wire
+        return out * 0.86
+
+    elif variant == 1:  # Brushed snare
+        dur = 0.24
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        noise = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [900 / (SR / 2), 5200 / (SR / 2)], btype='band')
+        brush = sps.lfilter(b, a, noise) * np.exp(-t * 16.0)
+        body = np.sin(2.0 * np.pi * 180.0 * t) * np.exp(-t * 36.0) * 0.28
+        out = brush * 0.70 + body
+        return out * 0.82
+
+    elif variant == 2:  # Tape clap / Snap
+        dur = 0.18
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        out = np.zeros(n)
+        for offset_ms in [0, 8, 17]:
+            pos = int((offset_ms / 1000.0) * SR)
+            burst_len = int(0.045 * SR)
+            burst_noise = np.random.normal(0, 1, burst_len) * np.exp(-np.linspace(0, 18, burst_len))
+            b, a = sps.butter(2, [1200 / (SR / 2), 4800 / (SR / 2)], btype='band')
+            filtered = sps.lfilter(b, a, burst_noise) * 0.35
+            out[pos:pos + len(filtered)] += filtered
+        tail = np.random.normal(0, 1, n) * np.exp(-t * 22.0) * 0.12
+        b, a = sps.butter(2, [800 / (SR / 2), 3500 / (SR / 2)], btype='band')
+        out += sps.lfilter(b, a, tail)
+        return out * 0.84
+
+    else:  # Mellow click
+        dur = 0.12
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        modes = [(520.0, 0.50, 45.0), (1200.0, 0.30, 60.0)]
+        out = np.zeros(n)
+        for freq, amp, decay in modes:
+            out += amp * np.sin(2.0 * np.pi * freq * t) * np.exp(-t * decay)
+        b, a = sps.butter(2, 2200 / (SR / 2), btype='low')
+        return sps.lfilter(b, a, out) * 0.78
+
+
+def synth_hat(variant: int = 0, open_hat: bool = False) -> np.ndarray:
+    """4 tipos de platillos/shakers:
+       0: Closed crisp hat con filtros analógicos.
+       1: Sizzle hat abierto suave.
+       2: Shaker orgánico de semillas / cabasa.
+       3: Ride cymbal con ping sutil y armónicos.
+    """
+    if variant == 2:  # Shaker orgánico
+        dur = 0.08
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        noise = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [3500 / (SR / 2), 9500 / (SR / 2)], btype='band')
+        shaker = sps.lfilter(b, a, noise)
+        env = np.sin(np.pi * np.clip(t / dur, 0, 1)) ** 1.8
+        return shaker * env * 0.40
+
+    elif variant == 3:  # Ride cymbal / Ping
+        dur = 0.35 if open_hat else 0.14
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        modes = [2380.0, 3120.0, 4850.0, 6200.0]
+        bell = np.zeros(n)
+        for m in modes:
+            bell += np.sin(2.0 * np.pi * m * t) * 0.25
+        noise = np.random.normal(0, 1, n) * 0.4
+        b, a = sps.butter(2, [4000 / (SR / 2), 12000 / (SR / 2)], btype='band')
+        sig = sps.lfilter(b, a, bell + noise)
+        decay = 14.0 if open_hat else 45.0
+        return sig * np.exp(-t * decay) * 0.32
+
+    else:  # Hat estándar (cerrado o abierto)
+        dur = 0.22 if open_hat else 0.05
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        modes = [285.3, 397.6, 521.8, 642.1, 789.4, 912.7]
+        cymb = np.zeros(n)
+        for m in modes:
+            f = m * 5.6
+            cymb += np.sin(2.0 * np.pi * f * t) * (0.8 + 0.2 * np.sin(2.0 * np.pi * (m * 0.2) * t))
+        noise = np.random.normal(0, 1, n)
+        cymb = cymb * 0.45 + noise * 0.55
+        b, a = sps.butter(2, [5500 / (SR / 2), 11500 / (SR / 2)], btype='band')
+        filtered = sps.lfilter(b, a, cymb)
+        decay = 16.0 if open_hat else 65.0
+        return filtered * np.exp(-t * decay) * 0.38
+
+
+# ─────────────────────────────────────────────────────────────
+# 2. VINILO ANALÓGICO & WOW/FLUTTER TAPE MODULATION
+# ─────────────────────────────────────────────────────────────
+
+def synth_vinyl_crackle(duration: float) -> np.ndarray:
+    """Genera crujido de aguja de tocadiscos y polvo estocástico auténtico."""
+    n = int(duration * SR)
+    t = np.linspace(0, duration, n, endpoint=False)
+    # 1. Hiss de superficie suave
+    surface = np.random.normal(0, 1, n)
+    b_hiss, a_hiss = sps.butter(2, [800 / (SR / 2), 4500 / (SR / 2)], btype='band')
+    hiss = sps.lfilter(b_hiss, a_hiss, surface) * 0.0055
+
+    # 2. Clicks y pops estocásticos (partículas de polvo en el vinilo)
+    clicks = np.zeros(n)
+    num_clicks = int(duration * random.uniform(3.0, 7.0))
+    for _ in range(num_clicks):
+        pos = random.randint(0, max(0, n - 200))
+        click_dur = random.randint(30, 120)
+        pop_env = np.exp(-np.linspace(0, 12, click_dur))
+        pop = np.random.normal(0, 1, click_dur) * pop_env * random.uniform(0.012, 0.035)
+        clicks[pos:pos + click_dur] += pop
+
+    return hiss + clicks
+
+
+def apply_tape_flutter(audio: np.ndarray) -> np.ndarray:
+    """Modulación sutil de tono (tape wow & flutter) con LFO ultra-lento de 0.35 Hz."""
+    n = audio.shape[1]
+    t = np.linspace(0, n / SR, n, endpoint=False)
+    # Variación de retardo de ±0.8ms a 0.38Hz
+    mod = 0.0008 * np.sin(2.0 * np.pi * 0.38 * t) + 0.0003 * np.sin(2.0 * np.pi * 1.15 * t)
+    indices = np.arange(n) + (mod * SR)
+    indices = np.clip(indices, 0, n - 1)
+
+    out = np.zeros_like(audio)
+    idx_floor = np.floor(indices).astype(int)
+    idx_ceil = np.clip(idx_floor + 1, 0, n - 1)
+    frac = indices - idx_floor
+
+    out[0] = audio[0, idx_floor] * (1.0 - frac) + audio[0, idx_ceil] * frac
+    out[1] = audio[1, idx_floor] * (1.0 - frac) + audio[1, idx_ceil] * frac
+    return out
+
+
+# ─────────────────────────────────────────────────────────────
+# 3. FOLEY ORGÁNICO REACTIVO
+# ─────────────────────────────────────────────────────────────
+
+def synth_scene_foley(scene: str, duration: float) -> np.ndarray:
+    n = int(duration * SR)
+    t = np.linspace(0, duration, n, endpoint=False)
+    out = np.zeros(n)
+    sc = (scene or "").lower()
+
+    if any(k in sc for k in ("veo3", "cafe", "latam")):
+        rain = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [350 / (SR / 2), 3000 / (SR / 2)], btype='band')
+        out += sps.lfilter(b, a, rain) * 0.015
+        num_clinks = int(duration / 12) + 1
+        for _ in range(num_clinks):
+            pos = random.randint(0, max(0, n - int(1.0 * SR)))
+            dur_c = 0.8
+            n_c = int(dur_c * SR)
+            t_c = np.linspace(0, dur_c, n_c, endpoint=False)
+            clink = (np.sin(2.0 * np.pi * 3150.0 * t_c) * 0.5 + 
+                     np.sin(2.0 * np.pi * 5320.0 * t_c) * 0.3) * np.exp(-t_c * 28.0) * 0.007
+            out[pos:pos + n_c] += clink
             
-            self.thunder_active = {
-                'ts': t_abs,
-                'dist': dist,
-                'delay': delay,
-                'crack_amp': crack_amp,
-                'rumble_amp': rumble_amp,
-                'rumble_dur': rumble_dur,
-                'fc': fc
-            }
-            self.thunder_next = t_abs + delay + rumble_dur + self.rng.uniform(40.0, 150.0)
-            
-        if self.thunder_active:
-            ta_active = self.thunder_active
-            ts = ta_active['ts']
-            dist = ta_active['dist']
-            delay = ta_active['delay']
-            crack_amp = ta_active['crack_amp']
-            rumble_amp = ta_active['rumble_amp']
-            rumble_dur = ta_active['rumble_dur']
-            fc = ta_active['fc']
-            
-            t_samples = np.linspace(t_abs, t_abs + n / SR, n, endpoint=False)
-            
-            # 1. Relámpago (Crack de alta frecuencia inicial)
-            if crack_amp > 0:
-                age_crack = t_samples - ts
-                mask_crack = (age_crack > 0) & (age_crack < 0.12)
-                if np.any(mask_crack):
-                    age_c = age_crack[mask_crack]
-                    noise_c = np.random.uniform(-1.0, 1.0, np.sum(mask_crack))
-                    b_c, a_c = biquad_bandpass(1400.0, 0.5, SR)
-                    crack_filtered = sps.lfilter(b_c, a_c, noise_c)
-                    env_crack = np.exp(-35.0 * age_c)
-                    out[mask_crack] += crack_filtered * env_crack * crack_amp
-            
-            # 2. Retumbar (Rumble de baja frecuencia retardado)
-            rumble_start_t = ts + delay
-            age_rumble = t_samples - rumble_start_t
-            mask_rumble = (age_rumble > 0) & (age_rumble < rumble_dur)
-            
-            if np.any(mask_rumble):
-                age_active = age_rumble[mask_rumble]
-                env = np.exp(-0.30 * age_active)
-                
-                # Ecos y reflexiones secundarias
-                reflections = (1.0 + 
-                               0.40 * np.exp(-1.5 * np.abs(age_active - 1.2)) + 
-                               0.25 * np.exp(-1.0 * np.abs(age_active - 2.5)) + 
-                               0.15 * np.exp(-0.8 * np.abs(age_active - 4.0)))
-                
-                # Modulación de rugido lento
-                rumble_mod = 1.0 + 0.35 * np.sin(2 * np.pi * 6.5 * age_active) * np.sin(2 * np.pi * 0.8 * age_active)
-                full_env = env * reflections * rumble_mod
-                
-                # Ruido de baja frecuencia con paso bajo variable por ráfagas
-                noise_r = np.random.uniform(-1.0, 1.0, np.sum(mask_rumble))
-                rumble_filtered = np.zeros_like(noise_r)
-                
-                block_size = 512
-                zi = self.thunder_rumble_zi if self.thunder_rumble_zi is not None else np.zeros(2)
-                
-                for start in range(0, len(noise_r), block_size):
-                    end = min(start + block_size, len(noise_r))
-                    if start == end:
-                        break
-                    t_avg = np.mean(age_active[start:end])
-                    # Barrido de frecuencia: decrece exponencialmente con el tiempo de fc a 38 Hz
-                    fc_sweep = float(np.clip(fc * np.exp(-0.16 * t_avg), 38.0, fc))
-                    # Q decae suavemente para suavizar resonancias al final
-                    Q_sweep = float(np.clip(1.2 - 0.04 * t_avg, 0.6, 1.2))
-                    
-                    b_th, a_th = biquad_lowpass(fc_sweep, Q_sweep, SR)
-                    rumble_filtered[start:end], zi = sps.lfilter(b_th, a_th, noise_r[start:end], zi=zi)
-                
-                self.thunder_rumble_zi = zi
-                out[mask_rumble] += rumble_filtered * full_env * rumble_amp
-                
-            if t_abs + n / SR >= ts + delay + rumble_dur:
-                self.thunder_active = None
-                self.thunder_rumble_zi = None
-                
-        return out
+    elif "nieve" in sc or "polar" in sc:
+        wind = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [180 / (SR / 2), 750 / (SR / 2)], btype='band')
+        gust = 0.70 + 0.30 * np.sin(2.0 * np.pi * 0.08 * t)
+        out += sps.lfilter(b, a, wind) * gust * 0.014
+        num_creaks = int(duration / 10) + 1
+        for _ in range(num_creaks):
+            pos = random.randint(0, max(0, n - int(1.5 * SR)))
+            dur_k = 1.2
+            n_k = int(dur_k * SR)
+            t_k = np.linspace(0, dur_k, n_k, endpoint=False)
+            creak = np.sin(2.0 * np.pi * 140.0 * t_k) * np.exp(-t_k * 4.5) * 0.008
+            out[pos:pos + n_k] += creak
 
-    def generate_chunk(self, t_abs, n, state):
-        prof = SCENE_PROFILES.get(state.scene, SCENE_PROFILES[DEFAULT_SCENE])
+    elif "bosque" in sc:
+        wind = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [450 / (SR / 2), 2200 / (SR / 2)], btype='band')
+        breeze = 0.60 + 0.40 * np.sin(2.0 * np.pi * 0.15 * t)
+        out += sps.lfilter(b, a, wind) * breeze * 0.009
+        num_leaves = int(duration / 6) + 1
+        for _ in range(num_leaves):
+            pos = random.randint(0, max(0, n - int(1.2 * SR)))
+            dur_l = 1.0
+            n_l = int(dur_l * SR)
+            t_l = np.linspace(0, dur_l, n_l, endpoint=False)
+            rustle = np.random.normal(0, 1, n_l)
+            b_r, a_r = sps.butter(2, [1200 / (SR / 2), 4500 / (SR / 2)], btype='band')
+            out[pos:pos + n_l] += sps.lfilter(b_r, a_r, rustle) * np.sin(np.pi * np.clip(t_l / dur_l, 0, 1)) * 0.006
 
-        # ── [NEW] Extracción de ganancias de nuevos sintetizadores ──
-        rcs_gain       = prof.get('rcs_gain', 0.0)
-        telemetry_gain = prof.get('telemetry_gain', 0.0)
-        glacier_gain   = prof.get('glacier_gain', 0.0)
-        wire_gain      = prof.get('wire_gain', 0.0)
-        drops_gain     = prof.get('drops_gain', 0.0)
-        sway_gain      = prof.get('sway_gain', 0.0)
-        subcreak_gain  = prof.get('subcreak_gain', 0.0)
-        sonar_gain     = prof.get('sonar_gain', 0.0)
-        avalanche_gain = prof.get('avalanche_gain', 0.0)
-        harp_gain      = prof.get('harp_gain', 0.0)
-        sand_gain      = prof.get('sand_gain', 0.0)
-        magma_gain     = prof.get('magma_gain', 0.0)
-        steam_gain     = prof.get('steam_gain', 0.0)
-        geiger_gain    = prof.get('geiger_gain', 0.0)
-        coolant_gain   = prof.get('coolant_gain', 0.0)
-        valve_gain     = prof.get('valve_gain', 0.0)
-        thunder_gain   = prof.get('thunder_gain', 0.0)
-        dog_gain     = prof.get('dog_gain', 0.0)
-        traffic_gain = prof.get('traffic_gain', 0.0)
-        moto_gain    = prof.get('moto_gain', 0.0)
-        frog_gain    = prof.get('frog_gain', 0.0)
-        leaves_gain  = prof.get('leaves_gain', 0.0)
+    elif "submarina" in sc:
+        hull_hum = (np.sin(2.0 * np.pi * 42.0 * t) * 0.016 + np.sin(2.0 * np.pi * 84.0 * t) * 0.008)
+        flow_noise = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, 280 / (SR / 2), btype='low')
+        out += hull_hum + sps.lfilter(b, a, flow_noise) * 0.012
+        num_pings = int(duration / 14) + 1
+        for _ in range(num_pings):
+            pos = random.randint(0, max(0, n - int(2.5 * SR)))
+            dur_p = 2.0
+            n_p = int(dur_p * SR)
+            t_p = np.linspace(0, dur_p, n_p, endpoint=False)
+            ping = (np.sin(2.0 * np.pi * 780.0 * t_p) + 0.3 * np.sin(2.0 * np.pi * 1560.0 * t_p)) * np.exp(-t_p * 2.2) * 0.009
+            out[pos:pos + n_p] += ping
 
-        radio    = self._radio_chunk(t_abs, n, prof['radio_gain'])
-        fan      = self._fan_chunk(t_abs, n, prof['fan_gain'])
-        steps    = self._step_chunk(t_abs, n, state.density, state.scene)
-        dings    = self._ding_chunk(t_abs, n, state.density, prof['ding_gain'])
-        cart     = self._cart_chunk(t_abs, n)
-        water    = self._water_chunk(t_abs, n, prof['water_gain'])
-        knock    = self._knock_chunk(t_abs, n, state.scene)
-        blizzard = self._blizzard_chunk(t_abs, n, prof['wind_gain']) if prof['blizzard'] else np.zeros(n)
-        whistle  = self._air_whistle_chunk(t_abs, n, prof.get('whistle_gain', 0.0), state.wind_spd, state.scene)
-        creak    = self._creak_chunk(t_abs, n, prof['creak_gain'])
-        corona   = self._corona_crackle_chunk(t_abs, n, prof.get('corona_gain', 0.0))
-        chains   = self._chains_chunk(t_abs, n, prof.get('creak_gain', 0.0) if state.scene in ('scp_contencion', 'scp_exterior') else 0.0)
+    elif "reactor" in sc:
+        reactor = (np.sin(2.0 * np.pi * 36.0 * t) * 0.018 + np.sin(2.0 * np.pi * 72.0 * t) * 0.009 + np.sin(2.0 * np.pi * 120.0 * t) * 0.005)
+        coolant = 0.82 + 0.18 * np.sin(2.0 * np.pi * 0.12 * t)
+        out += reactor * coolant
+        elec_hum = (np.sin(2.0 * np.pi * 60.0 * t) * 0.008 + np.sin(2.0 * np.pi * 180.0 * t) * 0.004)
+        spikes = (np.random.uniform(0, 1, n) > 0.998).astype(float) * np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [2800 / (SR / 2), 7000 / (SR / 2)], btype='band')
+        out += elec_hum + sps.lfilter(b, a, spikes) * 0.007
 
-        # ── [NEW] Generación de nuevos chunks de sintetizadores ──
-        rcs        = self._rcs_thruster_chunk(t_abs, n, rcs_gain)
-        telemetry  = self._telemetry_chunk(t_abs, n, telemetry_gain)
-        glacier    = self._glacier_creak_chunk(t_abs, n, glacier_gain)
-        wire       = self._wire_whistle_chunk(t_abs, n, wire_gain, state.wind_spd)
-        drops      = self._metal_drops_chunk(t_abs, n, drops_gain, state.rain_intensity)
-        sway       = self._tree_sway_chunk(t_abs, n, sway_gain, state.wind_spd)
-        subcreak   = self._sub_creak_chunk(t_abs, n, subcreak_gain)
-        sonar_ping = self._sonar_ping_chunk(t_abs, n, sonar_gain)
-        avalanche  = self._avalanche_chunk(t_abs, n, avalanche_gain)
-        harp       = self._tension_harp_chunk(t_abs, n, harp_gain, state.wind_spd)
-        sand       = self._sandstorm_gust_chunk(t_abs, n, sand_gain, state.wind_spd)
-        magma      = self._magma_rumble_chunk(t_abs, n, magma_gain)
-        steam      = self._steam_vent_chunk(t_abs, n, steam_gain)
-        geiger     = self._geiger_click_chunk(t_abs, n, geiger_gain)
-        coolant    = self._coolant_flow_chunk(t_abs, n, coolant_gain)
-        valve      = self._valve_vent_chunk(t_abs, n, valve_gain)
-        thunder    = self._thunder_chunk(t_abs, n, thunder_gain)
-        dog_bark = self._dog_bark_chunk(t_abs, n, dog_gain)
-        traffic  = self._traffic_chunk(t_abs, n, traffic_gain)
-        moto     = self._moto_chunk(t_abs, n, moto_gain)
-        frog     = self._frog_chunk(t_abs, n, frog_gain)
-        leaves   = self._leaves_chunk(t_abs, n, leaves_gain)
-        cricket  = self._cricket_chunk(t_abs, n, state)
-        hum      = self._elec_hum_chunk(t_abs, n, prof['elec_hum'])
-        city     = self._city_chunk(t_abs, n, prof['city_gain'])
-        clock    = self._clock_chunk(t_abs, n, prof['clock_night'])
-        cassette = self._cassette_chunk(n, prof['cassette'])
-        emf      = self._emf_chunk(t_abs, n, prof['emf_gain'])
-        siren    = self._siren_chunk(t_abs, n, prof['siren_gain'])
-        breath   = self._breath_chunk(t_abs, n, prof['breath_gain'])
-        morse    = self._morse_chunk(t_abs, n, prof['morse_gain'])
-        anomaly  = self._anomaly_chunk(t_abs, n, prof['anomaly_gain'])
+    elif "tormenta" in sc:
+        heavy_rain = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [220 / (SR / 2), 4200 / (SR / 2)], btype='band')
+        out += sps.lfilter(b, a, heavy_rain) * 0.022
+        num_thunders = int(duration / 18) + 1
+        for _ in range(num_thunders):
+            pos = random.randint(0, max(0, n - int(4.0 * SR)))
+            dur_th = 3.5
+            n_th = int(dur_th * SR)
+            t_th = np.linspace(0, dur_th, n_th, endpoint=False)
+            th_noise = np.random.normal(0, 1, n_th)
+            b_th, a_th = sps.butter(2, [35 / (SR / 2), 160 / (SR / 2)], btype='band')
+            rumble = sps.lfilter(b_th, a_th, th_noise) * np.sin(np.pi * np.clip(t_th / dur_th, 0, 1)) ** 2 * 0.024
+            out[pos:pos + n_th] += rumble
 
-        rain_gain = prof['rain_base'] + state.rain_intensity * prof['rain_wx_mul']
-        rain = self._rain_chunk(t_abs, n, rain_gain,
-                                is_snow=prof['snow'], rain_glass=prof['rain_glass'])
+    elif "orbital" in sc or "space" in sc:
+        life_hum = np.sin(2.0 * np.pi * 48.0 * t) * 0.010
+        rcs_noise = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [120 / (SR / 2), 480 / (SR / 2)], btype='band')
+        out += life_hum + sps.lfilter(b, a, rcs_noise) * 0.006
+        num_bursts = int(duration / 16) + 1
+        for _ in range(num_bursts):
+            pos = random.randint(0, max(0, n - int(1.2 * SR)))
+            dur_b = 0.9
+            n_b = int(dur_b * SR)
+            t_b = np.linspace(0, dur_b, n_b, endpoint=False)
+            telemetry = np.sin(2.0 * np.pi * 1850.0 * t_b) * np.sin(2.0 * np.pi * 12.0 * t_b) * np.exp(-t_b * 3.5) * 0.005
+            out[pos:pos + n_b] += telemetry
 
-        # Rich spatial ambient: reactivamos todas las capas con ganancias calibradas
-        layer_levels = {
-            "radio": float(np.sqrt(np.mean((radio * 0.85) ** 2))),
-            "fan": float(np.sqrt(np.mean((fan * 0.35) ** 2))),
-            "rain": float(np.sqrt(np.mean((rain + drops) ** 2))),
-            "wind": float(np.sqrt(np.mean((blizzard * 0.28 + whistle * 0.65 + wire * 0.90 + sway * 0.70 + sand * 0.85) ** 2))),
-            "water": float(np.sqrt(np.mean((water * 0.80) ** 2))),
-            "hum": float(np.sqrt(np.mean(hum ** 2))),
-            "emf": float(np.sqrt(np.mean((emf * 0.60 + telemetry * 0.85) ** 2))),
-            "creak": float(np.sqrt(np.mean((creak * 0.25 + glacier * 0.75 + subcreak * 0.80) ** 2))),
-            "corona": float(np.sqrt(np.mean((corona * 0.60) ** 2))),
-            "rcs": float(np.sqrt(np.mean((rcs * 0.80) ** 2))),
-            "sonar": float(np.sqrt(np.mean((sonar_ping * 0.85) ** 2))),
-            "avalanche": float(np.sqrt(np.mean((avalanche * 0.80) ** 2))),
-            "harp": float(np.sqrt(np.mean((harp * 0.75) ** 2))),
-            "magma": float(np.sqrt(np.mean((magma * 0.92) ** 2))),
-            "steam": float(np.sqrt(np.mean((steam * 0.80 + valve * 0.82) ** 2))),
-            "geiger": float(np.sqrt(np.mean((geiger * 0.90) ** 2))),
-            "coolant": float(np.sqrt(np.mean((coolant * 0.70) ** 2))),
-            "thunder": float(np.sqrt(np.mean((thunder * 0.95) ** 2))),
-            "cricket": float(np.sqrt(np.mean((cricket * 0.45) ** 2))),
-            "pad": 0.0,
-        }
-        self.last_layer = max(layer_levels, key=layer_levels.get)
-
-        mix = (radio * 0.46 + fan * 0.22 + steps * 0.22 + dings * 0.18 + cart * 0.22 +
-               water * 0.72 + knock * 0.22 + rain * 0.52 + blizzard * 0.18 + whistle * 0.24 + creak * 0.16 + corona * 0.18 +
-               hum * 0.90 + city * 0.34 + clock * 0.16 + cassette * 0.18 + emf * 0.28 +
-               siren * 0.08 + breath * 0.34 + morse * 0.10 + anomaly * 0.22 +
-               rcs * 0.34 + telemetry * 0.32 + glacier * 0.34 + wire * 0.28 + drops * 0.34 +
-               sway * 0.40 + subcreak * 0.42 + sonar_ping * 0.24 + avalanche * 0.30 +
-               harp * 0.22 + sand * 0.36 +
-               magma * 0.58 + steam * 0.46 + geiger * 0.22 +
-               coolant * 0.44 + valve * 0.24 + thunder * 0.44 +
-               dog_bark * 0.18 + traffic * 0.36 + moto * 0.16 + frog * 0.30 + leaves * 0.26 +
-               cricket * 0.18 + chains * 0.45)
-        return mix
-
-
-
-# ──────────────────────────────────────────────────────────
-# Pedalboard — se actualiza in-place (no rebuild)
-# ──────────────────────────────────────────────────────────
-
-def build_board(state):
-    if not HAS_PEDALBOARD:
-        return None
-    cutoff_hz = 950.0 if state.scene == 'submarina' else (4200 + state.brightness * 1200)
-    return Pedalboard([
-        HighpassFilter(cutoff_frequency_hz=62.0),   # corta sub-bass inaudible
-        Chorus(rate_hz=0.25 + state.brightness * 0.35,
-               depth=0.18 + (1 - state.brightness) * 0.22,
-               centre_delay_ms=7.0, feedback=0.10, mix=state.chorus_mix),
-        Reverb(room_size=state.reverb_room,
-               damping=0.3 + state.brightness * 0.35,
-               wet_level=state.reverb_wet,
-               dry_level=1.0 - state.reverb_wet * 0.65),
-        # Compresor ambient: captura columnas/picos antes de que lleguen a AAC/YouTube.
-        Compressor(threshold_db=-18, ratio=2.2, attack_ms=80, release_ms=1600),
-        LowpassFilter(cutoff_frequency_hz=cutoff_hz),
-        Gain(gain_db=5.5),
-    ])
-
-
-def update_board_inplace(board, state):
-    """Actualiza parámetros sin reconstruir (board[0]=HPF fijo, no se toca)."""
-    if board is None:
-        return
-    # board[0] = HighpassFilter — cutoff fijo, no cambia
-    board[1].rate_hz   = 0.25 + state.brightness * 0.35
-    board[1].depth     = 0.18 + (1 - state.brightness) * 0.22
-    board[1].mix       = state.chorus_mix
-    board[2].room_size = state.reverb_room
-    board[2].damping   = 0.3 + state.brightness * 0.35
-    board[2].wet_level = state.reverb_wet
-    board[2].dry_level = 1.0 - state.reverb_wet * 0.65
-    # board[3] = Compressor — parámetros fijos, no cambia
-    if state.scene == 'submarina':
-        board[4].cutoff_frequency_hz = 950.0
     else:
-        board[4].cutoff_frequency_hz = 4200 + state.brightness * 1200
+        hum = np.sin(2.0 * np.pi * 50.0 * t) * 0.008
+        ambient_air = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [200 / (SR / 2), 800 / (SR / 2)], btype='band')
+        out += hum + sps.lfilter(b, a, ambient_air) * 0.007
+
+    return out
 
 
-# ──────────────────────────────────────────────────────────
-# Hilos en segundo plano para evitar congelar el bucle de audio
-# ──────────────────────────────────────────────────────────
+# 4. PALETA DE 16 PROGRESIONES ARMÓNICAS RICAS (CAFE & SCI-FI)
+# ─────────────────────────────────────────────────────────────
 
-def weather_worker(state):
-    while True:
-        try:
-            temp, humidity, wind_spd, w_code = fetch_weather()
-            state.temp = temp
-            state.humidity = humidity
-            state.wind_spd = wind_spd
-            state.w_code = w_code
-            log(f"Clima actualizado: {temp}°C {humidity}% {wind_spd}km/h código={w_code}")
-        except Exception as e:
-            log(f"Clima background falló: {e}", "WARN")
-        time.sleep(WEATHER_INTERVAL)
+CAFE_THEMES = [
+    {
+        "name": "D minor Gloom Station (57 BPM)",
+        "bpm": 57,
+        "scale": [50, 53, 55, 57, 60, 62, 65, 69],
+        "chords": [
+            [50, 53, 57, 60, 64],  # Dm9
+            [46, 50, 53, 57, 62],  # Bbmaj9
+            [43, 46, 50, 53, 58],  # Gm9
+            [48, 52, 55, 62, 64],  # Cadd9
+            [45, 48, 52, 55, 60],  # Am7
+        ],
+        "bass": [38, 34, 31, 36, 33],
+    },
+    {
+        "name": "C Major Sunday Afternoon (78 BPM)",
+        "bpm": 78,
+        "scale": [60, 62, 64, 67, 69, 72, 74, 76],
+        "chords": [
+            [60, 64, 67, 71, 74],  # Cmaj9
+            [57, 60, 64, 67, 71],  # Am9
+            [53, 57, 60, 64, 69],  # Fmaj9
+            [55, 59, 62, 65, 71],  # G13
+        ],
+        "bass": [48, 45, 41, 43],
+    },
+    {
+        "name": "D Dorian Midnight Espresso (74 BPM)",
+        "bpm": 74,
+        "scale": [57, 60, 62, 64, 67, 69, 72, 74],
+        "chords": [
+            [50, 53, 57, 60, 64],  # Dm9
+            [55, 58, 62, 65, 69],  # Gm9
+            [53, 57, 60, 64, 67],  # Fmaj7
+            [52, 55, 59, 62, 67],  # Em7
+        ],
+        "bass": [38, 43, 41, 40],
+    },
+    {
+        "name": "F Lydian Golden Sunset (80 BPM)",
+        "bpm": 80,
+        "scale": [53, 57, 60, 62, 65, 67, 69, 72],
+        "chords": [
+            [53, 57, 60, 64, 69],  # Fmaj9
+            [50, 53, 57, 60, 65],  # Dm11
+            [48, 52, 55, 59, 64],  # Cmaj9
+            [55, 58, 62, 65, 70],  # Gm11
+        ],
+        "bass": [41, 38, 36, 43],
+    },
+    {
+        "name": "Bb Neo-Soul Velvet (72 BPM)",
+        "bpm": 72,
+        "scale": [58, 61, 63, 65, 68, 70, 73, 75],
+        "chords": [
+            [58, 61, 65, 68, 72],  # Bbm9
+            [54, 58, 61, 65, 70],  # Gbmaj9
+            [49, 53, 56, 60, 65],  # Dbmaj9
+            [56, 60, 63, 66, 71],  # Ab13
+        ],
+        "bass": [46, 42, 37, 44],
+    },
+    {
+        "name": "Eb Major Warm Rain (75 BPM)",
+        "bpm": 75,
+        "scale": [51, 55, 58, 60, 63, 65, 67, 70],
+        "chords": [
+            [51, 55, 58, 62, 65],  # Ebmaj9
+            [48, 51, 55, 58, 62],  # Cm9
+            [53, 56, 60, 63, 67],  # Fm9
+            [46, 50, 53, 56, 62],  # Bb13
+        ],
+        "bass": [39, 36, 41, 34],
+    },
+    {
+        "name": "G Major Chill Bossa (82 BPM)",
+        "bpm": 82,
+        "scale": [55, 57, 59, 62, 64, 67, 69, 71],
+        "chords": [
+            [55, 59, 62, 66, 69],  # Gmaj9
+            [52, 55, 59, 62, 66],  # Em9
+            [48, 52, 55, 59, 64],  # Cmaj9
+            [50, 53, 57, 60, 66],  # D13
+        ],
+        "bass": [43, 40, 36, 38],
+    },
+    {
+        "name": "A Major Sakura Coffee (76 BPM)",
+        "bpm": 76,
+        "scale": [57, 59, 61, 64, 66, 69, 71, 73],
+        "chords": [
+            [57, 61, 64, 68, 71],  # Amaj9
+            [54, 57, 61, 64, 68],  # F#m9
+            [47, 50, 54, 57, 61],  # Bm9
+            [52, 56, 59, 62, 68],  # E13
+        ],
+        "bass": [45, 42, 35, 40],
+    }
+]
+
+OUTPOST_THEMES = [
+    {
+        "name": "Deep Space D Minor (56 BPM)",
+        "bpm": 56,
+        "scale": [50, 53, 55, 57, 60, 62, 65, 69],
+        "chords": [
+            [50, 53, 57, 60, 64],  # Dm9
+            [46, 50, 53, 57, 62],  # Bbmaj9
+            [43, 46, 50, 53, 58],  # Gm9
+            [45, 48, 52, 55, 60],  # Am7
+        ],
+        "bass": [38, 34, 31, 33],
+    },
+    {
+        "name": "F# Lydian Orbital Sanctuary (68 BPM)",
+        "bpm": 68,
+        "scale": [54, 57, 59, 61, 64, 66, 69, 71],
+        "chords": [
+            [54, 61, 64, 68, 71],  # F#m9
+            [50, 57, 61, 66, 68],  # Dmaj7#11
+            [57, 61, 64, 68, 71],  # Aadd9
+            [49, 56, 61, 64, 68],  # C#m7
+        ],
+        "bass": [42, 38, 45, 37],
+    },
+    {
+        "name": "A Minor Cosmic Drift (66 BPM)",
+        "bpm": 66,
+        "scale": [57, 60, 62, 64, 67, 69, 72, 74],
+        "chords": [
+            [57, 60, 64, 67, 71],  # Am9
+            [53, 57, 60, 64, 69],  # Fmaj7
+            [50, 53, 57, 60, 64],  # Dm9
+            [52, 55, 59, 62, 67],  # Em7
+        ],
+        "bass": [45, 41, 38, 40],
+    },
+    {
+        "name": "C Minor SCP Quarantine (64 BPM)",
+        "bpm": 64,
+        "scale": [48, 51, 53, 55, 58, 60, 63, 65],
+        "chords": [
+            [48, 55, 60, 63, 67],  # Cm9
+            [46, 53, 58, 62, 65],  # Bbmaj7
+            [44, 51, 56, 60, 63],  # Abmaj7
+            [43, 50, 55, 58, 62],  # Gm7
+        ],
+        "bass": [36, 34, 32, 31],
+    },
+    {
+        "name": "E Minor Solar Array (67 BPM)",
+        "bpm": 67,
+        "scale": [52, 55, 57, 59, 62, 64, 67, 69],
+        "chords": [
+            [52, 59, 62, 66, 69],  # Em9
+            [48, 55, 60, 64, 67],  # Cmaj9
+            [55, 62, 65, 69, 72],  # Gmaj7
+            [50, 57, 60, 64, 67],  # D7sus4
+        ],
+        "bass": [40, 36, 43, 38],
+    },
+    {
+        "name": "B Minor Ion Horizon (65 BPM)",
+        "bpm": 65,
+        "scale": [47, 50, 52, 54, 57, 59, 62, 64],
+        "chords": [
+            [47, 54, 57, 61, 64],  # Bm9
+            [43, 50, 55, 59, 62],  # Gmaj7
+            [40, 47, 52, 55, 59],  # Em9
+            [42, 49, 54, 57, 61],  # F#m7
+        ],
+        "bass": [35, 31, 28, 30],
+    },
+    {
+        "name": "G Minor Nebula Station (63 BPM)",
+        "bpm": 63,
+        "scale": [55, 58, 60, 62, 65, 67, 70, 72],
+        "chords": [
+            [55, 58, 62, 65, 69],  # Gm9
+            [51, 55, 58, 62, 65],  # Ebmaj7
+            [48, 51, 55, 58, 62],  # Cm9
+            [50, 53, 57, 60, 64],  # Dm7
+        ],
+        "bass": [43, 39, 36, 38],
+    },
+    {
+        "name": "D# Minor Sub-Zero Bunker (60 BPM)",
+        "bpm": 60,
+        "scale": [51, 54, 56, 58, 61, 63, 66, 68],
+        "chords": [
+            [51, 54, 58, 61, 65],  # D#m9
+            [47, 51, 54, 58, 63],  # Bmaj9
+            [44, 47, 51, 54, 59],  # G#m9
+            [46, 49, 53, 56, 61],  # A#m7
+        ],
+        "bass": [39, 35, 32, 34],
+    }
+]
+
+# ─────────────────────────────────────────────────────────────
+# 5. GENERADOR MELÓDICO HUMANO CON FRASAS DINÁMICAS
+# ─────────────────────────────────────────────────────────────
+
+def synth_lofi_lead_melody(scale: list, num_bars: int, bar_dur: float, beat_dur: float, total_samples: int, dark: bool) -> np.ndarray:
+    bus = np.zeros(total_samples)
+    for b in range(num_bars):
+        bar_start = b * bar_dur
+        # Silencios estratégicos (respiro musical orgánico en compases alternados)
+        if b % 4 == 3 or b % 8 in (2, 5):
+            continue
+
+        rhythms = [
+            [0.5, 1.5, 2.5],
+            [0.0, 1.25, 2.5, 3.25],
+            [1.0, 2.0, 3.0],
+            [0.75, 2.25],
+            [1.5, 2.5, 3.5]
+        ]
+        rhythm = random.choice(rhythms)
+        for beat_pos in rhythm:
+            note_time = bar_start + beat_pos * beat_dur
+            idx = int(note_time * SR)
+            if idx >= total_samples - int(0.7 * SR):
+                continue
+            note = random.choice(scale)
+            f = midi_to_freq(note)
+            dur_n = random.uniform(0.35, 0.68)
+            n_len = int(dur_n * SR)
+            n_len = min(n_len, total_samples - idx)
+            tn = np.linspace(0, dur_n, n_len, endpoint=False)
+
+            tone = (np.sin(2.0 * np.pi * f * tn) + 
+                    0.22 * np.sin(4.0 * np.pi * f * tn) + 
+                    0.06 * np.sin(6.0 * np.pi * f * tn))
+            env = np.clip(tn / 0.015, 0, 1) * np.exp(-tn * 3.2)
+            trem = 1.0 + 0.08 * np.sin(2.0 * np.pi * 5.2 * tn)
+            vel = random.uniform(0.30, 0.45)
+            bus[idx:idx + n_len] += tone * env * trem * vel
+
+    b_lp, a_lp = sps.butter(2, (1800 if dark else 2700) / (SR / 2), btype='low')
+    return sps.lfilter(b_lp, a_lp, bus)
 
 
-def network_worker(state):
-    while True:
-        try:
-            devices = fetch_network_devices()
-            state.devices = devices
-            log(f"Dispositivos actualizados: {devices}")
-        except Exception as e:
-            log(f"Network background falló: {e}", "WARN")
-        time.sleep(NETWORK_INTERVAL)
+# ─────────────────────────────────────────────────────────────
+# 6. COMPOSICIÓN INTEGRAL CON 6 ESTILOS RÍTMICOS VARIADOS
+# ─────────────────────────────────────────────────────────────
+
+def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
+    dark = (mode == "outpost")
+    themes = OUTPOST_THEMES if dark else CAFE_THEMES
+    theme = random.choice(themes)
+
+    bpm = theme["bpm"]
+    beat_dur = 60.0 / bpm
+    bar_dur = beat_dur * 4.0
+    total_dur = num_bars * bar_dur
+    total_samples = int(total_dur * SR)
+
+    # Selección aleatoria del estilo rítmico para este tema:
+    # 0: ambient_pure (sin drums, pura belleza)
+    # 1: half_time_lofi (bombo en 1, rim en 3)
+    # 2: classic_boombap (groove completo clásico)
+    # 3: dilla_swing (swing MPC borracho con ghost notes)
+    # 4: bossa_cross_stick (bossa sincopada)
+    # 5: laidback_triplets (shakers suaves continuos)
+    rhythm_style = random.choice([0, 1, 2, 3, 4, 5])
+    kick_var = random.choice([0, 1, 2, 3])
+    rim_var = random.choice([0, 1, 2, 3])
+    hat_var = random.choice([0, 1, 2, 3])
+
+    kick_sample = synth_kick(variant=kick_var)
+    rim_sample = synth_rimshot(variant=rim_var)
+    hat_sample = synth_hat(variant=hat_var, open_hat=False)
+    open_hat_sample = synth_hat(variant=hat_var, open_hat=True)
+
+    rhodes_bus = np.zeros(total_samples)
+    bass_bus = np.zeros(total_samples)
+    drum_bus = np.zeros(total_samples)
+    melody_bus = synth_lofi_lead_melody(theme["scale"], num_bars, bar_dur, beat_dur, total_samples, dark)
+    foley_bus = synth_scene_foley(scene_name, total_dur)
+    vinyl_bus = synth_vinyl_crackle(total_dur)
+
+    chords = theme["chords"]
+    bass_notes = theme["bass"]
+
+    for bar in range(num_bars):
+        bar_start = bar * bar_dur
+        chord_idx = bar % len(chords)
+        current_chord = chords[chord_idx]
+        current_bass = bass_notes[chord_idx]
+
+        # ─── A. ACOMPAÑAMIENTO ARMÓNICO CON RASGUEO HUMANO (STRUM) ───
+        # Micro-rasgueo orgánico: notas no entran exactamente al mismo microsegundo
+        strum_direction = random.choice([1, -1])
+        sorted_notes = sorted(current_chord, reverse=(strum_direction == -1))
+        comp_pattern = random.choice(["sustained", "syncopated_stab", "arpeggiated"])
+
+        if comp_pattern == "sustained":
+            for n_idx, note in enumerate(sorted_notes):
+                strum_offset = n_idx * random.uniform(0.012, 0.028)
+                idx = int((bar_start + strum_offset) * SR)
+                if idx >= total_samples:
+                    continue
+                n_len = min(int(bar_dur * 0.95 * SR), total_samples - idx)
+                t_c = np.linspace(0, n_len / SR, n_len, endpoint=False)
+                f = midi_to_freq(note)
+                tone = np.sin(2.0 * np.pi * f * t_c) + 0.20 * np.sin(4.0 * np.pi * f * t_c)
+                env = np.clip(t_c / 0.02, 0, 1) * np.exp(-t_c * 0.58)
+                rhodes_bus[idx:idx + n_len] += tone * env * (0.52 / len(current_chord))
+
+        elif comp_pattern == "syncopated_stab":
+            # Golpe en el beat 0 y stab sutil en el beat 2.5
+            for hit_beat in [0.0, 2.5]:
+                for n_idx, note in enumerate(sorted_notes):
+                    strum_offset = n_idx * random.uniform(0.010, 0.022)
+                    idx = int((bar_start + hit_beat * beat_dur + strum_offset) * SR)
+                    if idx >= total_samples:
+                        continue
+                    dur_hit = (bar_dur - hit_beat * beat_dur) * 0.85
+                    n_len = min(int(dur_hit * SR), total_samples - idx)
+                    t_c = np.linspace(0, n_len / SR, n_len, endpoint=False)
+                    f = midi_to_freq(note)
+                    decay_rate = 1.2 if hit_beat > 0 else 0.70
+                    tone = np.sin(2.0 * np.pi * f * t_c) + 0.18 * np.sin(4.0 * np.pi * f * t_c)
+                    env = np.clip(t_c / 0.015, 0, 1) * np.exp(-t_c * decay_rate)
+                    rhodes_bus[idx:idx + n_len] += tone * env * (0.50 / len(current_chord))
+
+        else:  # arpeggiated
+            for a_idx, note in enumerate(current_chord):
+                arp_beat = (a_idx * 0.75) % 4.0
+                idx = int((bar_start + arp_beat * beat_dur) * SR)
+                if idx >= total_samples:
+                    continue
+                n_len = min(int(1.2 * SR), total_samples - idx)
+                t_c = np.linspace(0, n_len / SR, n_len, endpoint=False)
+                f = midi_to_freq(note)
+                tone = np.sin(2.0 * np.pi * f * t_c) + 0.15 * np.sin(4.0 * np.pi * f * t_c)
+                env = np.clip(t_c / 0.018, 0, 1) * np.exp(-t_c * 1.8)
+                rhodes_bus[idx:idx + n_len] += tone * env * 0.18
+
+        # ─── B. LÍNEA DE BAJO DINÁMICA CON NOTAS DE PASO ───
+        # Beat 0: Nota raíz fundamental
+        idx_b0 = int(bar_start * SR)
+        fb0 = midi_to_freq(current_bass)
+        n_len_b = min(int(bar_dur * 0.90 * SR), total_samples - idx_b0)
+        t_b0 = np.linspace(0, n_len_b / SR, n_len_b, endpoint=False)
+        bass_sig0 = np.sin(2.0 * np.pi * fb0 * t_b0) * np.exp(-t_b0 * 0.42)
+        bass_bus[idx_b0:idx_b0 + n_len_b] += bass_sig0 * 0.68
+
+        # En compases pares, agregar nota de paso / quinta suave en beat 2.5
+        if bar % 2 == 1:
+            idx_bpass = int((bar_start + 2.5 * beat_dur) * SR)
+            if idx_bpass < total_samples:
+                fb_pass = midi_to_freq(current_bass + random.choice([7, 12, -5]))
+                n_len_bp = min(int(1.2 * SR), total_samples - idx_bpass)
+                t_bp = np.linspace(0, n_len_bp / SR, n_len_bp, endpoint=False)
+                bass_pass = np.sin(2.0 * np.pi * fb_pass * t_bp) * np.exp(-t_bp * 1.1)
+                bass_bus[idx_bpass:idx_bpass + n_len_bp] += bass_pass * 0.45
+
+        # ─── C. BATERÍAS CON LOS 6 GROOVES DIVERSOS ───
+        is_breakdown = (bar % 8 == 7)  # Compás 7: respiro total de drums
+
+        if not is_breakdown and rhythm_style != 0:  # Style 0 = Sin batería
+            if rhythm_style == 1:  # Half-time lo-fi (minimalista y espacioso)
+                # Bombo en beat 0
+                idx_k = int(bar_start * SR)
+                if idx_k < total_samples:
+                    k_len = min(len(kick_sample), total_samples - idx_k)
+                    drum_bus[idx_k:idx_k + k_len] += kick_sample[:k_len] * 0.85
+                # Rimshot solo en beat 2 (half-time)
+                idx_r = int((bar_start + 2.0 * beat_dur) * SR)
+                if idx_r < total_samples:
+                    r_len = min(len(rim_sample), total_samples - idx_r)
+                    drum_bus[idx_r:idx_r + r_len] += rim_sample[:r_len] * 0.90
+                # Hats en contratiempo (offbeats 1.0, 3.0)
+                for h_pos in [1.0, 3.0]:
+                    idx_h = int((bar_start + h_pos * beat_dur) * SR)
+                    if idx_h < total_samples:
+                        h_len = min(len(hat_sample), total_samples - idx_h)
+                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.40
+
+            elif rhythm_style == 2:  # Classic Boom-bap con swing suave
+                for b_pos in [0, 1, 2, 3]:
+                    swing = 0.020 if (b_pos % 2 == 1) else 0.0
+                    idx_b = int((bar_start + b_pos * beat_dur + swing) * SR)
+                    # Hats en cada negra y corchea
+                    if idx_b < total_samples:
+                        h_len = min(len(hat_sample), total_samples - idx_b)
+                        drum_bus[idx_b:idx_b + h_len] += hat_sample[:h_len] * 0.50
+                    # Bombo en 0 y 2.5
+                    if b_pos == 0 and idx_b < total_samples:
+                        k_len = min(len(kick_sample), total_samples - idx_b)
+                        drum_bus[idx_b:idx_b + k_len] += kick_sample[:k_len]
+                    elif b_pos == 2:
+                        idx_k2 = int((bar_start + 2.5 * beat_dur + 0.012) * SR)
+                        if idx_k2 < total_samples:
+                            k_len = min(len(kick_sample), total_samples - idx_k2)
+                            drum_bus[idx_k2:idx_k2 + k_len] += kick_sample[:k_len] * 0.78
+                    # Rim en 1 y 3
+                    if b_pos in (1, 3) and idx_b < total_samples:
+                        r_len = min(len(rim_sample), total_samples - idx_b)
+                        drum_bus[idx_b:idx_b + r_len] += rim_sample[:r_len]
+
+            elif rhythm_style == 3:  # Dilla Drunken MPC swing
+                human_lag = random.uniform(0.018, 0.034)
+                # Bombo arrastrado en 0 y 1.75
+                idx_k1 = max(0, int(bar_start * SR))
+                if 0 <= idx_k1 < total_samples:
+                    k_len = min(len(kick_sample), total_samples - idx_k1)
+                    drum_bus[idx_k1:idx_k1 + k_len] += kick_sample[:k_len] * 0.95
+                idx_k2 = max(0, int((bar_start + 1.75 * beat_dur + human_lag) * SR))
+                if 0 <= idx_k2 < total_samples:
+                    k_len = min(len(kick_sample), total_samples - idx_k2)
+                    drum_bus[idx_k2:idx_k2 + k_len] += kick_sample[:k_len] * 0.70
+                # Rimshot rezagado intencional en 1 y 3 (+lag)
+                for r_pos in [1.0, 3.0]:
+                    idx_r = max(0, int((bar_start + r_pos * beat_dur + human_lag) * SR))
+                    if 0 <= idx_r < total_samples:
+                        r_len = min(len(rim_sample), total_samples - idx_r)
+                        drum_bus[idx_r:idx_r + r_len] += rim_sample[:r_len] * 0.92
+                # Ghost rim tap en 2.75
+                idx_ghost = max(0, int((bar_start + 2.75 * beat_dur) * SR))
+                if 0 <= idx_ghost < total_samples:
+                    r_len = min(len(rim_sample), total_samples - idx_ghost)
+                    drum_bus[idx_ghost:idx_ghost + r_len] += rim_sample[:r_len] * 0.28
+                # Shaker o hats con micro-variación
+                for step in range(8):
+                    pos_h = max(0.0, bar_start + (step * 0.5) * beat_dur + random.uniform(-0.008, 0.015))
+                    idx_h = max(0, int(pos_h * SR))
+                    if 0 <= idx_h < total_samples:
+                        h_len = min(len(hat_sample), total_samples - idx_h)
+                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * random.uniform(0.25, 0.48)
+
+            elif rhythm_style == 4:  # Bossa Nova cross-stick
+                # Kicks continuos suaves en 0 y 2
+                for k_pos in [0.0, 2.0]:
+                    idx_k = int((bar_start + k_pos * beat_dur) * SR)
+                    if idx_k < total_samples:
+                        k_len = min(len(kick_sample), total_samples - idx_k)
+                        drum_bus[idx_k:idx_k + k_len] += kick_sample[:k_len] * 0.75
+                # Sincopación clásica de cross-stick [0.0, 1.5, 2.75, 3.5]
+                for r_pos in [0.0, 1.5, 2.75, 3.5]:
+                    idx_r = int((bar_start + r_pos * beat_dur) * SR)
+                    if idx_r < total_samples:
+                        r_len = min(len(rim_sample), total_samples - idx_r)
+                        drum_bus[idx_r:idx_r + r_len] += rim_sample[:r_len] * 0.80
+                # Shakers o hats en corcheas constantes
+                for step in range(8):
+                    idx_h = int((bar_start + (step * 0.5) * beat_dur) * SR)
+                    if idx_h < total_samples:
+                        h_len = min(len(hat_sample), total_samples - idx_h)
+                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.35
+
+            elif rhythm_style == 5:  # Laidback Shaker & Ride con platillo abierto
+                # Kick suave solo en beat 0
+                idx_k = int(bar_start * SR)
+                if idx_k < total_samples:
+                    k_len = min(len(kick_sample), total_samples - idx_k)
+                    drum_bus[idx_k:idx_k + k_len] += kick_sample[:k_len] * 0.80
+                # Rim en 2.0
+                idx_r = int((bar_start + 2.0 * beat_dur) * SR)
+                if idx_r < total_samples:
+                    r_len = min(len(rim_sample), total_samples - idx_r)
+                    drum_bus[idx_r:idx_r + r_len] += rim_sample[:r_len] * 0.85
+                # Open hat en 3.5 como suspiro rítmico
+                idx_open = int((bar_start + 3.5 * beat_dur) * SR)
+                if idx_open < total_samples:
+                    o_len = min(len(open_hat_sample), total_samples - idx_open)
+                    drum_bus[idx_open:idx_open + o_len] += open_hat_sample[:o_len] * 0.40
+                # Shakers orgánicos continuos
+                for step in range(8):
+                    idx_h = int((bar_start + (step * 0.5) * beat_dur) * SR)
+                    if idx_h < total_samples:
+                        h_len = min(len(hat_sample), total_samples - idx_h)
+                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.32
+        else:
+            # En el breakdown solo platillos o shakers muy tenues
+            for step in range(4):
+                idx_h = int((bar_start + step * beat_dur) * SR)
+                if idx_h < total_samples:
+                    h_len = min(len(hat_sample), total_samples - idx_h)
+                    drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.22
+
+    # ─── MASTER STEREO BUS & PROCESAMIENTO ANALÓGICO ───
+    stereo = np.zeros((2, total_samples))
+    mix_l = (rhodes_bus * 0.58 + bass_bus * 0.70 + drum_bus * 0.82 + 
+             foley_bus * 0.55 + melody_bus * 0.52 + vinyl_bus * 0.75)
+    mix_r = (rhodes_bus * 0.58 + bass_bus * 0.70 + drum_bus * 0.82 + 
+             foley_bus * 0.55 + melody_bus * 0.46 + vinyl_bus * 0.75)
+    stereo[0] = mix_l
+    stereo[1] = mix_r
+
+    if HAVE_PEDALBOARD:
+        board = Pedalboard([
+            HighpassFilter(cutoff_frequency_hz=30.0),
+            LowpassFilter(cutoff_frequency_hz=3000.0 if dark else 3400.0),
+            Chorus(rate_hz=0.65, depth=0.20, mix=0.15),
+            Reverb(room_size=0.85 if dark else 0.70, damping=0.45, wet_level=0.28, dry_level=0.88),
+            Compressor(threshold_db=-14.0, ratio=2.6),
+            Gain(gain_db=1.2)
+        ])
+        processed = board(stereo, SR)
+    else:
+        # Fallback SciPy si no hay pedalboard
+        b, a = sps.butter(2, [32 / (SR / 2), 3200 / (SR / 2)], btype='band')
+        processed = np.zeros_like(stereo)
+        processed[0] = sps.lfilter(b, a, stereo[0])
+        processed[1] = sps.lfilter(b, a, stereo[1])
+
+    # Wow & Flutter de cinta analógica
+    fluttered = apply_tape_flutter(processed)
+
+    # Normalización de pico a -1.2 dBFS
+    max_val = np.max(np.abs(fluttered))
+    if max_val > 0.001:
+        fluttered = (fluttered / max_val) * (10.0 ** (-1.2 / 20.0))
+
+    return fluttered
 
 
-def system_worker(state):
-    while True:
-        try:
-            load1, used_pct = fetch_system_load()
-            state.load1 = load1
-            state.load_ram_pct = used_pct
-        except Exception as e:
-            log(f"System background falló: {e}", "WARN")
-        time.sleep(SYSTEM_INTERVAL)
-
-
-def viewers_worker(state):
-    while True:
-        try:
-            viewers = fetch_viewers()
-            state.viewers = viewers
-        except Exception as e:
-            log(f"Viewers background falló: {e}", "WARN")
-        time.sleep(30)
-
-
-def log(msg, level="INFO"):
-    print(f"[{level}] {msg}", file=sys.stderr, flush=True)
+def read_active_scene_and_mode():
+    scene = "veo3_manana"
+    try:
+        if os.path.exists(SCENE_FILE):
+            with open(SCENE_FILE, "r") as f:
+                scene = f.read().strip()
+    except Exception:
+        pass
+    if any(x in scene for x in ("veo3", "cafe", "latam", "manana", "tarde", "noche")):
+        mode = "cafe"
+    else:
+        mode = "outpost"
+    return scene, mode
 
 
 def main():
-    state = AudioState()
-    synth = Synthesizer()
-    last_snapshot = 0
-    board = None
-    chunk_count = 0
-    master_gain = 1.0
-    diffuser = MonoDiffuser(sr=SR, rt60=2.6, mix=0.22, damp=0.5)  # cola difusa estilo Bitwig
-    _stage = "init"   # rastrea dónde estamos si algo explota
+    AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+    buffer_files = []
 
-    # Cargar valores iniciales síncronamente antes de arrancar los hilos
-    log("Obteniendo clima e información de red iniciales...")
-    try:
-        state.temp, state.humidity, state.wind_spd, state.w_code = fetch_weather()
-        log(f"Clima inicial: {state.temp}°C {state.humidity}% {state.wind_spd}km/h código={state.w_code}")
-    except Exception as e:
-        log(f"Fallo inicial de clima: {e}", "WARN")
-    
-    try:
-        state.devices = fetch_network_devices()
-        log(f"Dispositivos iniciales: {state.devices}")
-    except Exception as e:
-        log(f"Fallo inicial de red: {e}", "WARN")
-        
-    try:
-        state.load1, state.load_ram_pct = fetch_system_load()
-    except Exception as e:
-        log(f"Fallo inicial de carga de sistema: {e}", "WARN")
-        
-    try:
-        state.viewers = fetch_viewers()
-    except Exception as e:
-        log(f"Fallo inicial de espectadores: {e}", "WARN")
+    sys.stderr.write("[INFO] audio_engine v4 iniciado: Multi-Groove Lo-Fi Dinámico con 16 Paletas Armónicas y Tape Wow/Flutter\\n")
+    sys.stderr.flush()
 
-    # Iniciar hilos en segundo plano para recolección asíncrona de datos
-    log("Iniciando hilos de segundo plano para recolección de datos...")
-    t_weather = threading.Thread(target=weather_worker, args=(state,), daemon=True)
-    t_network = threading.Thread(target=network_worker, args=(state,), daemon=True)
-    t_system = threading.Thread(target=system_worker, args=(state,), daemon=True)
-    t_viewers = threading.Thread(target=viewers_worker, args=(state,), daemon=True)
-    
-    t_weather.start()
-    t_network.start()
-    t_system.start()
-    t_viewers.start()
+    track_idx = 0
+    pcm_queue = bytearray()
 
-    log("audio_engine iniciado. Escribiendo PCM s16le a stdout...")
+    while True:
+        scene_name, mode = read_active_scene_and_mode()
+        track_idx += 1
+        filename = AUDIO_DIR / f"lofi_track_{track_idx:04d}_{mode}.wav"
 
-    try:
-        while True:
-            now = time.time()
+        audio = compose_track(scene_name, mode, num_bars=16)
 
-            _stage = "update_targets"
-            state.update_targets()
-            state.lerp_step(CHUNK)
+        audio_int16 = (audio.T * 32767).clip(-32768, 32767).astype(np.int16)
+        wavfile.write(str(filename), SR, audio_int16)
+        buffer_files.append(str(filename))
 
-            _stage = "build_board"
-            if board is None:
-                board = build_board(state)
-                log(f"Pedalboard construido: HAS_PEDALBOARD={HAS_PEDALBOARD}")
-            else:
-                update_board_inplace(board, state)
+        while len(buffer_files) > 2:
+            removed = buffer_files.pop(0)
+            try:
+                os.remove(removed)
+            except Exception:
+                pass
 
-            _stage = "generate_chunk"
-            audio = synth.generate_chunk(state)
+        track_bytes = audio_int16.tobytes()
+        pcm_queue.extend(track_bytes)
 
-            _stage = "nan_check"
-            nan_count = int(np.sum(np.isnan(audio)))
-            inf_count = int(np.sum(np.isinf(audio)))
-            if nan_count or inf_count:
-                log(f"NaN={nan_count} Inf={inf_count} en chunk {chunk_count} — limpiando", "WARN")
-            audio = np.nan_to_num(audio, nan=0.0, posinf=0.8, neginf=-0.8)
-            audio = np.clip(audio, -1.0, 1.0)
-
-            _stage = "pedalboard"
-            if board and HAS_PEDALBOARD:
-                audio_f32 = np.clip(audio.astype(np.float32), -1.0, 1.0).reshape(1, -1)
-                processed = board(audio_f32, SR)
-                audio = np.nan_to_num(processed.flatten().astype(np.float64), nan=0.0)
-
-            _stage = "diffusion"
-            audio = diffuser.process(audio)   # cola difusa (a prueba de fallos: devuelve seco si algo falla)
-
-            _stage = "master_bus"
-            # Ganancia adaptativa RMS calibrada para un volumen de transmisión óptimo
-            rms = float(np.sqrt(np.mean(audio**2)))
-            if rms > 1e-6:
-                raw_gain = 0.52 / rms
-                master_gain += (float(np.clip(raw_gain, 0.40, 15.00)) - master_gain) * 0.04
-            audio = np.tanh(audio * master_gain * 0.95)
-            peak = float(np.max(np.abs(audio)))
-
-            _stage = "write_stdout"
-            sys.stdout.buffer.write((audio * 32760).astype(np.int16).tobytes())
-            sys.stdout.buffer.flush()
-
-            _stage = "save_snapshot"
-            if now - last_snapshot > SNAPSHOT_INTERVAL:
-                save_audio_snapshot(synth)
-                last_snapshot = now
-
-            chunk_count += 1
-            chords = CHORD_SETS.get(state.chord_set, CHORD_SETS['dark_station'])
-            chord_num = (synth.chord_idx % len(chords)) + 1
-            chord_label = f"{state.chord_set}:{chord_num}/{len(chords)}"
-            # Exportar estado extendido al final del chunk en un hilo secundario daemon
-            # para evitar que la latencia de I/O en disco provoque micro-cortes
-            threading.Thread(
-                target=state.export,
-                kwargs={
-                    'peak': peak,
-                    'rms': rms,
-                    'chunk_count': chunk_count,
-                    'chord_label': chord_label,
-                    'layer_label': synth.last_layer,
-                    'master_gain': master_gain
-                },
-                daemon=True
-            ).start()
-            if chunk_count % 15 == 0:
-                prof  = SCENE_PROFILES.get(state.scene, {})
-                label = prof.get('label', state.scene)
-                log(f"{label} | bright={state.brightness:.2f} density={state.density:.2f} "
-                    f"energy={state.energy:.2f} peak={peak:.3f} rms={rms:.4f} "
-                    f"gain={master_gain:.2f} layer={synth.last_layer} "
-                    f"t={synth.t_abs:.0f}s chunk={chunk_count}")
-
-    except BrokenPipeError:
-        log("Pipe cerrado.")
-    except KeyboardInterrupt:
-        log("Detenido.")
-    except Exception as e:
-        import traceback
-        log(f"CRASH en etapa '{_stage}' chunk={chunk_count} t={synth.t_abs:.1f}s — {type(e).__name__}: {e}", "ERROR")
-        log(traceback.format_exc(), "ERROR")
+        chunk_bytes_len = CHUNK_SAMPLES * 2 * 2
+        while len(pcm_queue) >= chunk_bytes_len:
+            chunk = pcm_queue[:chunk_bytes_len]
+            pcm_queue = pcm_queue[chunk_bytes_len:]
+            try:
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+            except BrokenPipeError:
+                return
 
 
 if __name__ == "__main__":

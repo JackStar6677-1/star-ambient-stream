@@ -1,3 +1,12 @@
+
+def atomic_write(path, text):
+    tmp = f"{path}.tmp"
+    try:
+        with open(tmp, 'w', encoding='utf-8') as f:
+            f.write(text)
+        os.replace(tmp, path)
+    except Exception:
+        pass
 #!/usr/bin/env python3
 """
 hud_updater.py — HUD overlay para el stream 24/7.
@@ -27,6 +36,12 @@ MONTHS_ES = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","
 
 # Nombres legibles para escenas
 SCENE_NAMES = {
+    "COZY STUDY - MORNING": "Estudio Chill",
+    "BOTANICAL GREENHOUSE": "Invernadero",
+    "MIDNIGHT CAFE - RAINY LOFI": "Cafetería Nocturna",
+    "VEO3_MANANA": "Estudio Chill",
+    "VEO3_TARDE": "Invernadero",
+    "VEO3_NOCHE": "Cafetería Nocturna",
     "ELECTRIC FIELD":  "Campo Eléctrico",
     "ORBITAL":         "Órbita",
     "SNOW":            "Tormenta de Nieve",
@@ -153,16 +168,14 @@ def update_loop(youtube=None, broadcast_id=None):
 
         try:
             # Línea 1: identidad + hora
-            with open(HUD1, 'w') as f:
-                f.write(f"[ STAR ]  Santiago, Chile  //  {hora}  //  {fecha}{viewers_str}")
+            atomic_write(HUD1, f"[ STAR ]  Santiago, Chile  //  {hora}  //  {fecha}{viewers_str}")
 
             # Línea 2: escena + sistema
-            with open(HUD2, 'w') as f:
-                f.write(
+            atomic_write(HUD2, 
                     f"[ {scene_name} ]"
                     f"  CPU: {cpu}%"
                     f"  MEM: {ram}"
-                    f"  Disp: {devices}"
+                    f"  Jugadores: {devices}"
                     f"  Reverb: {m['reverb']}/{m['wet']}"
                     f"  Vol: {fmt_rms(m['rms'])}"
                     f"  Amp: {fmt_gain(m['gain'])}"
@@ -170,11 +183,9 @@ def update_loop(youtube=None, broadcast_id=None):
 
             # Línea 3: audio generativo + clima
             if now < _notify_until:
-                with open(HUD3, 'w') as f:
-                    f.write(f">> Cambiando a: {scene_name}")
+                atomic_write(HUD3, f">> Cambiando a: {scene_name}")
             else:
-                with open(HUD3, 'w') as f:
-                    f.write(
+                atomic_write(HUD3, 
                         f"Acorde: {fmt_chord(m['chord'])}"
                         f"  |  Capa: {m['layer']}"
                         f"  |  Clima: {cause_name}"

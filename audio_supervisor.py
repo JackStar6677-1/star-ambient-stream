@@ -16,7 +16,7 @@ import sys
 import time
 
 SR = 44100
-CHANNELS = 1
+CHANNELS = 2   # PCM s16le estéreo entrelazado
 SAMPLE_WIDTH = 2
 ENGINE = "audio_engine.py"
 WATCH_FILES = (
@@ -33,6 +33,9 @@ CHECK_INTERVAL = 2.0
 # Maximo de NaN consecutivos antes de loguear (evita spam)
 _NAN_LOG_INTERVAL = 10
 _nan_log_count = 0
+
+# Motores vivos (incluye el de reemplazo durante un crossfade) para pararlos al salir.
+_engines = set()
 
 
 def log(message, level="INFO"):
@@ -55,7 +58,7 @@ def watched_signature():
 
 def start_engine(label):
     log(f"iniciando motor {label}")
-    return subprocess.Popen(
+    proc = subprocess.Popen(
         [sys.executable, "-u", ENGINE],
         stdout=subprocess.PIPE,
         stderr=sys.stderr,
@@ -63,12 +66,15 @@ def start_engine(label):
         bufsize=0,
         start_new_session=True,
     )
+    _engines.add(proc)
+    return proc
 
 
 def stop_engine(proc, label):
     if not proc:
         return
     if proc.poll() is not None:
+        _engines.discard(proc)
         return
     log(f"deteniendo motor {label}")
     try:
@@ -88,6 +94,12 @@ def stop_engine(proc, label):
                 proc.kill()
             except Exception:
                 pass
+        try:
+            proc.wait(timeout=5)  # recoge el proceso para no dejar zombis
+        except Exception:
+            pass
+    if proc.poll() is not None:
+        _engines.discard(proc)
 
 
 def read_exact(proc):
@@ -188,10 +200,29 @@ def crossfade_to_new_engine(current, reason):
     return replacement, wrote_any
 
 
+def _on_sigterm(signum, frame):
+    # stream_manager nos para con SIGTERM en cada rotacion de escena. Sin esto Python
+    # muere sin ejecutar el finally y el motor (otra sesion) queda huerfano: lo adopta
+    # el PID 1 del contenedor, que no lo recoge, y deja un zombi por rotacion.
+    raise SystemExit(0)
+
+
 def main():
+    signal.signal(signal.SIGTERM, _on_sigterm)
     current = start_engine("inicial")
     signature = watched_signature()
     last_check = time.time()
+
+    # Pre-buffer: acumular 2 chunks (8s) antes de escribir para asegurar fluidez en FFmpeg
+    try:
+        log("precargando 8s de audio inicial para buffer estable de FFmpeg...")
+        c1 = read_exact(current)
+        c2 = read_exact(current)
+        if c1: write_chunk(sanitize_chunk(c1))
+        if c2: write_chunk(sanitize_chunk(c2))
+        log("buffer inicial de audio entregado exitosamente a FFmpeg")
+    except Exception as e:
+        log(f"aviso durante pre-buffering: {e}", "WARN")
 
     try:
         while True:
@@ -224,4 +255,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        # Cubre tambien el pre-buffer y un crossfade a medias.
+        for proc in list(_engines):
+            stop_engine(proc, "pendiente")

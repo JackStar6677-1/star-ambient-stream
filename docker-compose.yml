@@ -4,12 +4,29 @@ services:
   streamer:
     build: .
     container_name: youtube_streamer
+    shm_size: "512m"
     restart: always
+    environment:
+      - RTMP_KEY=${RTMP_KEY:?RTMP_KEY debe definirse en .env}
     volumes:
-      - ./token.pickle:/app/token.pickle   # generado por auth.py, no subir a git
-      - ./scenes:/app/scenes               # videos MP4 de cada escena
+      - ./token.pickle:/app/token.pickle
+      - ./episode.json:/app/episode.json
+      - ./logo.png:/app/logo.png:ro
+      - ./logo_kika_circle.png:/app/logo_kika_circle.png:ro
+      - ./logo_king.png:/app/logo_king.png:ro
+      - ./logo_jackstar_circle.png:/app/logo_jackstar_circle.png:ro
+      - ./audio_engine.py:/app/audio_engine.py
+      - ./audio_supervisor.py:/app/audio_supervisor.py
+      - ./hud_updater.py:/app/hud_updater.py
+      - ./stream_manager.py:/app/stream_manager.py
+      - ./chat_listener.py:/app/chat_listener.py
+      - ./thumbnail_scifi_live_v1.png:/app/thumbnail_scifi_live_v1.png:ro
+      - ./thumbnail_generator.py:/app/thumbnail_generator.py
+      - ./thumbnails:/app/thumbnails
+      - ./generators:/app/generators:ro
+      - ./scenes:/app/scenes:ro
     logging:
-      driver: "json-file"
+      driver: 'json-file'
       options:
-        max-size: "10m"
-        max-file: "3"
+        max-size: '10m'
+        max-file: '3'
