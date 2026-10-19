@@ -549,7 +549,7 @@ def save_episode(n):
         pass
 
 
-def build_drawtext(textfile, y_expr, fontsize, color='white', alpha='0.85'):
+def build_drawtext(textfile, y_expr, fontsize, color='white', alpha='0.90', x_pos='24'):
     return (
         f"drawtext="
         f"fontfile={FONT}:"
@@ -559,7 +559,7 @@ def build_drawtext(textfile, y_expr, fontsize, color='white', alpha='0.85'):
         f"expansion=none:"
         f"fontcolor={color}@{alpha}:"
         f"fontsize={fontsize}:"
-        f"x=20:"
+        f"x={x_pos}:"
         f"y={y_expr}:"
         f"shadowcolor=black@0.9:"
         f"shadowx=2:"
@@ -613,20 +613,35 @@ def start_ffmpeg_audio(video_path, _ingestion_url=None, _stream_name=None):
 
     vf = ",".join([
         "fps=30",
-        build_drawtext(HUD1, "h-88", fontsize=21, color='0x00EEFF'),
-        build_drawtext(HUD2, "h-60", fontsize=18, color='0xAAFFAA'),
-        build_drawtext(HUD3, "h-32", fontsize=17, color='0xFFDD44'),
+        # 1. Top-left card backdrop para logos
+        "drawbox=x=10:y=10:w=242:h=122:color=black@0.45:t=fill",
+        "drawbox=x=10:y=10:w=242:h=2:color=0x00EEFF@0.65:t=fill",
+        "drawbox=x=10:y=10:w=3:h=20:color=0x00EEFF@0.85:t=fill",
+        # 2. Consola HUD terminal inferior
+        "drawbox=x=14:y=560:w=1060:h=148:color=black@0.65:t=fill",
+        "drawbox=x=14:y=560:w=1060:h=2:color=0x00EEFF@0.70:t=fill",
+        "drawbox=x=14:y=560:w=4:h=28:color=0x00EEFF@0.90:t=fill",
+        # 3. Dock empotrado para espectrometro reactivo
+        "drawbox=x=22:y=566:w=464:h=46:color=0x060C14@0.85:t=fill",
+        "drawbox=x=22:y=566:w=464:h=46:color=0x00BBDD@0.35:t=1",
+        # 4. Badges de telemetria junto al espectrometro
+        f"drawtext=fontfile={FONT}:text='DRAKESCRAFT NETWORK // mc.drakescraft.cl':fontsize=14:fontcolor=0x00EEFF@0.85:x=505:y=576:shadowcolor=black@0.8:shadowx=1:shadowy=1",
+        f"drawtext=fontfile={FONT}:text='24/7 PROCEDURAL AMBIENT - PURE DSP - ZERO LOOPS':fontsize=12:fontcolor=0x88FFAA@0.75:x=505:y=596:shadowcolor=black@0.8:shadowx=1:shadowy=1",
+        # 5. Lineas HUD del sistema
+        build_drawtext(HUD1, "620", fontsize=17, color='0x00EEFF', alpha='0.95', x_pos='24'),
+        build_drawtext(HUD2, "646", fontsize=15, color='0xAAFFAA', alpha='0.90', x_pos='24'),
+        build_drawtext(HUD3, "672", fontsize=14, color='0xFFDD44', alpha='0.90', x_pos='24'),
     ])
-    # Espectrómetro reactivo de audio integrado sobre la barra HUD
+    # Espectrometro reactivo de audio integrado sobre la barra HUD
     filter_complex = (
         f"[1:a]aresample=async=1000:first_pts=0,asplit=2[a_stream][a_spec];"
-        f"[a_spec]showfreqs=s=460x42:mode=bar:ascale=log:fscale=log:win_size=1024:colors=0x00EEFF|0x00BBDD|0x88FFAA|0xFFDD44,format=rgba,colorchannelmixer=aa=0.75[spec];"
+        f"[a_spec]showfreqs=s=460x42:mode=bar:ascale=log:fscale=log:win_size=1024:colors=0x00EEFF|0x00BBDD|0x88FFAA|0xFFDD44,format=rgba,colorchannelmixer=aa=0.85[spec];"
         f"[0:v]{vf}[base];"
-        f"[base][spec]overlay=20:H-148[b0];"
-        f"[2:v]scale=110:-1[l1];"
-        f"[3:v]scale=110:-1[l2];"
-        f"[b0][l1]overlay=15:15[b2];"
-        f"[b2][l2]overlay=133:15[b3];"
+        f"[base][spec]overlay=24:568[b0];"
+        f"[2:v]scale=100:-1[l1];"
+        f"[3:v]scale=100:-1[l2];"
+        f"[b0][l1]overlay=18:18[b2];"
+        f"[b2][l2]overlay=126:18[b3];"
         f"[b3][4:v]overlay=W-w-15:H-h-15[v]"
     )
 
