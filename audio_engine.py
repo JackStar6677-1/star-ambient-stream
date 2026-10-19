@@ -639,8 +639,14 @@ OUTPOST_THEMES = [
 # 5. GENERADOR MELÓDICO HUMANO CON FRASAS DINÁMICAS
 # ─────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────
+# 5. GENERADOR MELÓDICO HUMANO CON FRASAS DINÁMICAS
+# ─────────────────────────────────────────────────────────────
+
 def synth_lofi_lead_melody(scale: list, num_bars: int, bar_dur: float, beat_dur: float, total_samples: int, dark: bool) -> np.ndarray:
     bus = np.zeros(total_samples)
+    curr_idx = len(scale) // 2
+
     for b in range(num_bars):
         bar_start = b * bar_dur
         # Silencios estratégicos (respiro musical orgánico en compases alternados)
@@ -660,23 +666,129 @@ def synth_lofi_lead_melody(scale: list, num_bars: int, bar_dur: float, beat_dur:
             idx = int(note_time * SR)
             if idx >= total_samples - int(0.7 * SR):
                 continue
-            note = random.choice(scale)
+
+            # Movimiento melódico por grados conjuntos (pasos suaves con saltos ocasionales)
+            step = random.choices([-2, -1, 0, 1, 2, -3, 3], weights=[0.18, 0.28, 0.12, 0.26, 0.10, 0.03, 0.03])[0]
+            curr_idx = max(0, min(len(scale) - 1, curr_idx + step))
+            note = scale[curr_idx]
+
             f = midi_to_freq(note)
-            dur_n = random.uniform(0.35, 0.68)
+            dur_n = random.uniform(0.35, 0.70)
             n_len = int(dur_n * SR)
             n_len = min(n_len, total_samples - idx)
             tn = np.linspace(0, dur_n, n_len, endpoint=False)
 
-            tone = (np.sin(2.0 * np.pi * f * tn) + 
-                    0.22 * np.sin(4.0 * np.pi * f * tn) + 
-                    0.06 * np.sin(6.0 * np.pi * f * tn))
-            env = np.clip(tn / 0.015, 0, 1) * np.exp(-tn * 3.2)
-            trem = 1.0 + 0.08 * np.sin(2.0 * np.pi * 5.2 * tn)
-            vel = random.uniform(0.30, 0.45)
-            bus[idx:idx + n_len] += tone * env * trem * vel
+            # Vibrato expresivo retardado estilo jazz/lo-fi
+            vib_onset = np.clip((tn - 0.12) / 0.15, 0, 1)
+            vib = np.sin(2.0 * np.pi * 5.0 * tn) * (0.012 * f * vib_onset)
+            instant_phase = 2.0 * np.pi * f * tn + (2.0 * np.pi * vib * tn)
 
-    b_lp, a_lp = sps.butter(2, (1800 if dark else 2700) / (SR / 2), btype='low')
+            tone = (np.sin(instant_phase) + 
+                    0.20 * np.sin(2.0 * instant_phase) + 
+                    0.05 * np.sin(3.0 * instant_phase))
+            env = np.clip(tn / 0.018, 0, 1) * np.exp(-tn * 2.8)
+            vel = random.uniform(0.30, 0.44)
+            bus[idx:idx + n_len] += tone * env * vel
+
+    b_lp, a_lp = sps.butter(2, (1800 if dark else 2600) / (SR / 2), btype='low')
     return sps.lfilter(b_lp, a_lp, bus)
+
+
+def synth_rhodes_voice(f: float, t_arr: np.ndarray, decay_rate: float = 0.58) -> np.ndarray:
+    """Sintetiza una nota de piano Rhodes Mark I auténtico con ataque de campana (tine strike),
+    cuerpo armónico rico, vibrato suitcase y suave saturación no-lineal analógica."""
+    tine_f = f * 3.82
+    tine = 0.16 * np.sin(2.0 * np.pi * tine_f * t_arr) * np.exp(-t_arr * 42.0)
+    body = (
+        np.sin(2.0 * np.pi * f * t_arr) +
+        0.30 * np.sin(4.0 * np.pi * f * t_arr) +
+        0.12 * np.sin(6.0 * np.pi * f * t_arr) +
+        0.04 * np.sin(8.0 * np.pi * f * t_arr)
+    )
+    env = np.clip(t_arr / 0.016, 0, 1) * np.exp(-t_arr * decay_rate)
+    trem = 1.0 + 0.08 * np.sin(2.0 * np.pi * 4.2 * t_arr)
+    raw = (body + tine) * env * trem
+    return np.tanh(1.25 * raw) * 0.82
+
+
+def select_theme_and_rhythm_for_scene(scene_name: str, mode: str):
+    """Mapea cada escena visual a su paleta armónica y groove más coherente e inmersivo."""
+    sc = (scene_name or "").lower()
+    dark = (mode == "outpost")
+
+    # 1. Nieve / Polar: Glacial ambient espacioso, sin batería o con shakers mínimos
+    if any(k in sc for k in ("nieve", "polar", "arctic", "glaciar")):
+        matching = [t for t in OUTPOST_THEMES if any(w in t["name"].lower() for w in ("sub-zero", "deep space", "gloom"))]
+        theme = random.choice(matching) if matching else random.choice(OUTPOST_THEMES)
+        rhythm_style = random.choice([0, 0, 1, 5])
+
+    # 2. Tormenta / Lluvia: Neo-soul melancólico, lluvia y grooves relajados
+    elif any(k in sc for k in ("tormenta", "lluvia", "storm", "rain")):
+        matching = [t for t in (CAFE_THEMES + OUTPOST_THEMES) if any(w in t["name"].lower() for w in ("rain", "velvet", "gloom", "espresso"))]
+        theme = random.choice(matching) if matching else random.choice(CAFE_THEMES)
+        rhythm_style = random.choice([1, 3, 5])
+
+    # 3. Orbital / Espacio: Armónicos Lydian suspendidos, ingravidez cósmica
+    elif any(k in sc for k in ("orbital", "space", "satelite")):
+        matching = [t for t in OUTPOST_THEMES if any(w in t["name"].lower() for w in ("orbital", "cosmic", "nebula"))]
+        theme = random.choice(matching) if matching else random.choice(OUTPOST_THEMES)
+        rhythm_style = random.choice([0, 1, 5])
+
+    # 4. Base Submarina: Graves abisales, acordes oscuros de baja frecuencia
+    elif any(k in sc for k in ("submarina", "ocean", "deep")):
+        matching = [t for t in OUTPOST_THEMES if any(w in t["name"].lower() for w in ("quarantine", "gloom", "sub-zero"))]
+        theme = random.choice(matching) if matching else random.choice(OUTPOST_THEMES)
+        rhythm_style = random.choice([0, 1, 5])
+
+    # 5. Reactor / SCP Contención: Tensión cyberpunk industrial, stabs y sub-graves
+    elif any(k in sc for k in ("reactor", "scp_contencion", "contencion", "servidor")):
+        matching = [t for t in OUTPOST_THEMES if any(w in t["name"].lower() for w in ("quarantine", "ion", "nebula"))]
+        theme = random.choice(matching) if matching else random.choice(OUTPOST_THEMES)
+        rhythm_style = random.choice([1, 2, 3])
+
+    # 6. Bosque: Acordes acústicos cálidos, arpegios orgánicos
+    elif any(k in sc for k in ("bosque", "forest", "nature")):
+        matching = [t for t in CAFE_THEMES if any(w in t["name"].lower() for w in ("sunset", "sakura", "bossa"))]
+        theme = random.choice(matching) if matching else random.choice(CAFE_THEMES)
+        rhythm_style = random.choice([4, 5, 1])
+
+    # 7. Desierto: Escalas exóticas, groove lento e hipnótico
+    elif any(k in sc for k in ("desierto", "desert", "arid")):
+        matching = [t for t in OUTPOST_THEMES if any(w in t["name"].lower() for w in ("solar", "ion", "deep space"))]
+        theme = random.choice(matching) if matching else random.choice(OUTPOST_THEMES)
+        rhythm_style = random.choice([1, 3])
+
+    # 8. Array Suiza / Eléctrica: Resonancia de telescopios alpinos y campo EMF
+    elif any(k in sc for k in ("electrica", "array", "suiza", "scp_exterior")):
+        matching = [t for t in OUTPOST_THEMES if any(w in t["name"].lower() for w in ("solar", "ion", "orbital"))]
+        theme = random.choice(matching) if matching else random.choice(OUTPOST_THEMES)
+        rhythm_style = random.choice([0, 1, 5])
+
+    # 9. Caldera Volcánica: Magma subterráneo
+    elif any(k in sc for k in ("volcanica", "volcano", "magma")):
+        matching = [t for t in OUTPOST_THEMES if any(w in t["name"].lower() for w in ("sub-zero", "quarantine", "gloom"))]
+        theme = random.choice(matching) if matching else random.choice(OUTPOST_THEMES)
+        rhythm_style = random.choice([0, 1])
+
+    # 10. Cafetería / Mañana / Tarde / Noche (Veo3 & Latam)
+    elif "manana" in sc:
+        matching = [t for t in CAFE_THEMES if any(w in t["name"].lower() for w in ("sunday", "sunset"))]
+        theme = random.choice(matching) if matching else random.choice(CAFE_THEMES)
+        rhythm_style = random.choice([2, 4, 1])
+    elif "tarde" in sc:
+        matching = [t for t in CAFE_THEMES if any(w in t["name"].lower() for w in ("bossa", "sakura", "rain"))]
+        theme = random.choice(matching) if matching else random.choice(CAFE_THEMES)
+        rhythm_style = random.choice([4, 5, 2])
+    elif "noche" in sc or "latam" in sc:
+        matching = [t for t in CAFE_THEMES if any(w in t["name"].lower() for w in ("espresso", "velvet", "gloom"))]
+        theme = random.choice(matching) if matching else random.choice(CAFE_THEMES)
+        rhythm_style = random.choice([3, 1, 2])
+    else:
+        pool = OUTPOST_THEMES if dark else CAFE_THEMES
+        theme = random.choice(pool)
+        rhythm_style = random.choice([0, 1, 2, 3, 4, 5])
+
+    return theme, rhythm_style
 
 
 # ─────────────────────────────────────────────────────────────
@@ -685,8 +797,7 @@ def synth_lofi_lead_melody(scale: list, num_bars: int, bar_dur: float, beat_dur:
 
 def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
     dark = (mode == "outpost")
-    themes = OUTPOST_THEMES if dark else CAFE_THEMES
-    theme = random.choice(themes)
+    theme, rhythm_style = select_theme_and_rhythm_for_scene(scene_name, mode)
 
     bpm = theme["bpm"]
     beat_dur = 60.0 / bpm
@@ -694,14 +805,6 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
     total_dur = num_bars * bar_dur
     total_samples = int(total_dur * SR)
 
-    # Selección aleatoria del estilo rítmico para este tema:
-    # 0: ambient_pure (sin drums, pura belleza)
-    # 1: half_time_lofi (bombo en 1, rim en 3)
-    # 2: classic_boombap (groove completo clásico)
-    # 3: dilla_swing (swing MPC borracho con ghost notes)
-    # 4: bossa_cross_stick (bossa sincopada)
-    # 5: laidback_triplets (shakers suaves continuos)
-    rhythm_style = random.choice([0, 1, 2, 3, 4, 5])
     kick_var = random.choice([0, 1, 2, 3])
     rim_var = random.choice([0, 1, 2, 3])
     hat_var = random.choice([0, 1, 2, 3])
@@ -728,7 +831,6 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
         current_bass = bass_notes[chord_idx]
 
         # ─── A. ACOMPAÑAMIENTO ARMÓNICO CON RASGUEO HUMANO (STRUM) ───
-        # Micro-rasgueo orgánico: notas no entran exactamente al mismo microsegundo
         strum_direction = random.choice([1, -1])
         sorted_notes = sorted(current_chord, reverse=(strum_direction == -1))
         comp_pattern = random.choice(["sustained", "syncopated_stab", "arpeggiated"])
@@ -742,12 +844,9 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
                 n_len = min(int(bar_dur * 0.95 * SR), total_samples - idx)
                 t_c = np.linspace(0, n_len / SR, n_len, endpoint=False)
                 f = midi_to_freq(note)
-                tone = np.sin(2.0 * np.pi * f * t_c) + 0.20 * np.sin(4.0 * np.pi * f * t_c)
-                env = np.clip(t_c / 0.02, 0, 1) * np.exp(-t_c * 0.58)
-                rhodes_bus[idx:idx + n_len] += tone * env * (0.52 / len(current_chord))
+                rhodes_bus[idx:idx + n_len] += synth_rhodes_voice(f, t_c, decay_rate=0.58) * (0.54 / len(current_chord))
 
         elif comp_pattern == "syncopated_stab":
-            # Golpe en el beat 0 y stab sutil en el beat 2.5
             for hit_beat in [0.0, 2.5]:
                 for n_idx, note in enumerate(sorted_notes):
                     strum_offset = n_idx * random.uniform(0.010, 0.022)
@@ -759,9 +858,7 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
                     t_c = np.linspace(0, n_len / SR, n_len, endpoint=False)
                     f = midi_to_freq(note)
                     decay_rate = 1.2 if hit_beat > 0 else 0.70
-                    tone = np.sin(2.0 * np.pi * f * t_c) + 0.18 * np.sin(4.0 * np.pi * f * t_c)
-                    env = np.clip(t_c / 0.015, 0, 1) * np.exp(-t_c * decay_rate)
-                    rhodes_bus[idx:idx + n_len] += tone * env * (0.50 / len(current_chord))
+                    rhodes_bus[idx:idx + n_len] += synth_rhodes_voice(f, t_c, decay_rate=decay_rate) * (0.52 / len(current_chord))
 
         else:  # arpeggiated
             for a_idx, note in enumerate(current_chord):
@@ -772,28 +869,28 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
                 n_len = min(int(1.2 * SR), total_samples - idx)
                 t_c = np.linspace(0, n_len / SR, n_len, endpoint=False)
                 f = midi_to_freq(note)
-                tone = np.sin(2.0 * np.pi * f * t_c) + 0.15 * np.sin(4.0 * np.pi * f * t_c)
-                env = np.clip(t_c / 0.018, 0, 1) * np.exp(-t_c * 1.8)
-                rhodes_bus[idx:idx + n_len] += tone * env * 0.18
+                rhodes_bus[idx:idx + n_len] += synth_rhodes_voice(f, t_c, decay_rate=1.8) * 0.18
 
-        # ─── B. LÍNEA DE BAJO DINÁMICA CON NOTAS DE PASO ───
-        # Beat 0: Nota raíz fundamental
+        # ─── B. LÍNEA DE BAJO DINÁMICA CON NOTAS DE PASO Y 2DO ARMÓNICO ───
         idx_b0 = int(bar_start * SR)
         fb0 = midi_to_freq(current_bass)
         n_len_b = min(int(bar_dur * 0.90 * SR), total_samples - idx_b0)
         t_b0 = np.linspace(0, n_len_b / SR, n_len_b, endpoint=False)
-        bass_sig0 = np.sin(2.0 * np.pi * fb0 * t_b0) * np.exp(-t_b0 * 0.42)
-        bass_bus[idx_b0:idx_b0 + n_len_b] += bass_sig0 * 0.68
+        bass_sig0 = (np.sin(2.0 * np.pi * fb0 * t_b0) + 
+                     0.22 * np.sin(4.0 * np.pi * fb0 * t_b0)) * np.exp(-t_b0 * 0.38)
+        bass_sig0 = np.tanh(1.25 * bass_sig0) * 0.75
+        bass_bus[idx_b0:idx_b0 + n_len_b] += bass_sig0 * 0.70
 
-        # En compases pares, agregar nota de paso / quinta suave en beat 2.5
         if bar % 2 == 1:
             idx_bpass = int((bar_start + 2.5 * beat_dur) * SR)
             if idx_bpass < total_samples:
                 fb_pass = midi_to_freq(current_bass + random.choice([7, 12, -5]))
                 n_len_bp = min(int(1.2 * SR), total_samples - idx_bpass)
                 t_bp = np.linspace(0, n_len_bp / SR, n_len_bp, endpoint=False)
-                bass_pass = np.sin(2.0 * np.pi * fb_pass * t_bp) * np.exp(-t_bp * 1.1)
-                bass_bus[idx_bpass:idx_bpass + n_len_bp] += bass_pass * 0.45
+                bass_pass = (np.sin(2.0 * np.pi * fb_pass * t_bp) + 
+                             0.18 * np.sin(4.0 * np.pi * fb_pass * t_bp)) * np.exp(-t_bp * 1.0)
+                bass_pass = np.tanh(1.2 * bass_pass) * 0.65
+                bass_bus[idx_bpass:idx_bpass + n_len_bp] += bass_pass * 0.48
 
         # ─── C. BATERÍAS CON LOS 6 GROOVES DIVERSOS ───
         is_breakdown = (bar % 8 == 7)  # Compás 7: respiro total de drums
