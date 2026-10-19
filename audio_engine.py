@@ -175,57 +175,57 @@ def synth_rimshot(variant: int = 0) -> np.ndarray:
 
 
 def synth_hat(variant: int = 0, open_hat: bool = False) -> np.ndarray:
-    """4 tipos de platillos/shakers:
-       0: Closed crisp hat con filtros analógicos.
-       1: Sizzle hat abierto suave.
-       2: Shaker orgánico de semillas / cabasa.
-       3: Ride cymbal con ping sutil y armónicos.
+    """4 tipos de platillos/shakers lo-fi suaves y calidos (sin estridencia ni picos resonantes):
+       0: Closed warm tape hat (ruido rosa filtrado suave, cuerpo redondo).
+       1: Sizzle open hat (suspiro lo-fi amortiguado, sin agudos estridentes).
+       2: Shaker organico de semillas / cabasa acustica.
+       3: Mellow ride / ping sutil vintage.
     """
-    if variant == 2:  # Shaker orgánico
-        dur = 0.08
+    if variant == 2:  # Shaker organico suave
+        dur = 0.075
         n = int(dur * SR)
         t = np.linspace(0, dur, n, endpoint=False)
-        noise = np.random.normal(0, 1, n)
-        b, a = sps.butter(2, [3500 / (SR / 2), 9500 / (SR / 2)], btype='band')
-        shaker = sps.lfilter(b, a, noise)
-        env = np.sin(np.pi * np.clip(t / dur, 0, 1)) ** 1.8
-        return shaker * env * 0.40
+        white = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [2600 / (SR / 2), 6200 / (SR / 2)], btype='band')
+        shaker = sps.lfilter(b, a, white)
+        env = np.sin(np.pi * np.clip(t / dur, 0, 1)) ** 1.6
+        return shaker * env * 0.12
 
-    elif variant == 3:  # Ride cymbal / Ping
-        dur = 0.35 if open_hat else 0.14
+    elif variant == 3:  # Ride cymbal / Ping amortiguado
+        dur = 0.28 if open_hat else 0.10
         n = int(dur * SR)
         t = np.linspace(0, dur, n, endpoint=False)
-        modes = [2380.0, 3120.0, 4850.0, 6200.0]
+        modes = [1850.0, 2420.0, 3350.0]
         bell = np.zeros(n)
         for m in modes:
-            bell += np.sin(2.0 * np.pi * m * t) * 0.25
-        noise = np.random.normal(0, 1, n) * 0.4
-        b, a = sps.butter(2, [4000 / (SR / 2), 12000 / (SR / 2)], btype='band')
+            bell += np.sin(2.0 * np.pi * m * t) * 0.035
+        noise = np.random.normal(0, 1, n) * 0.20
+        b, a = sps.butter(2, [2400 / (SR / 2), 6500 / (SR / 2)], btype='band')
         sig = sps.lfilter(b, a, bell + noise)
-        decay = 14.0 if open_hat else 45.0
-        return sig * np.exp(-t * decay) * 0.32
+        decay = 18.0 if open_hat else 55.0
+        return sig * np.exp(-t * decay) * 0.11
 
-    else:  # Hat estándar (cerrado o abierto)
-        dur = 0.22 if open_hat else 0.05
+    elif variant == 1 or open_hat:  # Sizzle open hat calido
+        dur = 0.18
         n = int(dur * SR)
         t = np.linspace(0, dur, n, endpoint=False)
-        modes = [285.3, 397.6, 521.8, 642.1, 789.4, 912.7]
-        cymb = np.zeros(n)
-        for m in modes:
-            f = m * 5.6
-            cymb += np.sin(2.0 * np.pi * f * t) * (0.8 + 0.2 * np.sin(2.0 * np.pi * (m * 0.2) * t))
         noise = np.random.normal(0, 1, n)
-        cymb = cymb * 0.45 + noise * 0.55
-        b, a = sps.butter(2, [5500 / (SR / 2), 11500 / (SR / 2)], btype='band')
-        filtered = sps.lfilter(b, a, cymb)
-        decay = 16.0 if open_hat else 65.0
-        return filtered * np.exp(-t * decay) * 0.38
+        b, a = sps.butter(2, [2500 / (SR / 2), 6000 / (SR / 2)], btype='band')
+        sig = sps.lfilter(b, a, noise)
+        decay = 19.0
+        return sig * np.exp(-t * decay) * 0.12
 
-
-# ─────────────────────────────────────────────────────────────
-# 2. VINILO ANALÓGICO & WOW/FLUTTER TAPE MODULATION
-# ─────────────────────────────────────────────────────────────
-
+    else:  # Closed tape hat (variant 0)
+        dur = 0.045
+        n = int(dur * SR)
+        t = np.linspace(0, dur, n, endpoint=False)
+        noise = np.random.normal(0, 1, n)
+        b, a = sps.butter(2, [2400 / (SR / 2), 5600 / (SR / 2)], btype='band')
+        filtered = sps.lfilter(b, a, noise)
+        click_len = min(int(0.002 * SR), n)
+        filtered[:click_len] += np.random.normal(0, 0.25, click_len) * np.exp(-np.linspace(0, 8, click_len))
+        decay = 75.0
+        return filtered * np.exp(-t * decay) * 0.10
 def synth_vinyl_crackle(duration: float) -> np.ndarray:
     """Genera crujido de aguja de tocadiscos y polvo estocástico auténtico."""
     n = int(duration * SR)
@@ -272,115 +272,170 @@ def apply_tape_flutter(audio: np.ndarray) -> np.ndarray:
 # ─────────────────────────────────────────────────────────────
 
 def synth_scene_foley(scene: str, duration: float) -> np.ndarray:
+    """Generador procedural de paisajes sonoros y Foley de alta inmersion,
+    especificamente calibrado para cada escena visual del streaming:
+    nieve, tormenta/lluvia, servidores/ventiladores/reactor, base submarina, etc.
+    """
     n = int(duration * SR)
     t = np.linspace(0, duration, n, endpoint=False)
     out = np.zeros(n)
     sc = (scene or "").lower()
 
-    if any(k in sc for k in ("veo3", "cafe", "latam")):
-        rain = np.random.normal(0, 1, n)
-        b, a = sps.butter(2, [350 / (SR / 2), 3000 / (SR / 2)], btype='band')
-        out += sps.lfilter(b, a, rain) * 0.015
-        num_clinks = int(duration / 12) + 1
-        for _ in range(num_clinks):
-            pos = random.randint(0, max(0, n - int(1.0 * SR)))
-            dur_c = 0.8
-            n_c = int(dur_c * SR)
-            t_c = np.linspace(0, dur_c, n_c, endpoint=False)
-            clink = (np.sin(2.0 * np.pi * 3150.0 * t_c) * 0.5 + 
-                     np.sin(2.0 * np.pi * 5320.0 * t_c) * 0.3) * np.exp(-t_c * 28.0) * 0.007
-            out[pos:pos + n_c] += clink
-            
-    elif "nieve" in sc or "polar" in sc:
-        wind = np.random.normal(0, 1, n)
-        b, a = sps.butter(2, [180 / (SR / 2), 750 / (SR / 2)], btype='band')
-        gust = 0.70 + 0.30 * np.sin(2.0 * np.pi * 0.08 * t)
-        out += sps.lfilter(b, a, wind) * gust * 0.014
-        num_creaks = int(duration / 10) + 1
+    # 1. ESCENAS DE NIEVE / POLAR (Puesto Artico / Nieve 2h)
+    if any(k in sc for k in ("nieve", "polar", "arctic", "glaciar")):
+        # Viento sub-grave continuo del artico
+        b_sub, a_sub = sps.butter(2, [28 / (SR / 2), 160 / (SR / 2)], btype='band')
+        sub_rumble = sps.lfilter(b_sub, a_sub, np.random.normal(0, 1, n)) * 0.085
+        # Silbido y rafagas de ventisca organica con modulacion lenta
+        gust_lfo = 0.60 + 0.40 * np.sin(2.0 * np.pi * 0.065 * t + 0.4 * np.sin(2.0 * np.pi * 0.018 * t))
+        b_howl, a_howl = sps.butter(2, [260 / (SR / 2), 920 / (SR / 2)], btype='band')
+        howl = sps.lfilter(b_howl, a_howl, np.random.normal(0, 1, n)) * gust_lfo * 0.075
+        # Cristales de nieve fina / ventisca granular golpeando lona o cristal
+        b_ice, a_ice = sps.butter(2, [2200 / (SR / 2), 5200 / (SR / 2)], btype='band')
+        ice_drift = sps.lfilter(b_ice, a_ice, np.random.normal(0, 1, n)) * (gust_lfo * 0.75) * 0.032
+        # Crujidos esporadicos de tension por frio extremo
+        num_creaks = max(1, int(duration / 14))
         for _ in range(num_creaks):
-            pos = random.randint(0, max(0, n - int(1.5 * SR)))
-            dur_k = 1.2
+            pos = random.randint(0, max(0, n - int(1.2 * SR)))
+            dur_k = 1.0
             n_k = int(dur_k * SR)
             t_k = np.linspace(0, dur_k, n_k, endpoint=False)
-            creak = np.sin(2.0 * np.pi * 140.0 * t_k) * np.exp(-t_k * 4.5) * 0.008
+            creak = np.sin(2.0 * np.pi * 125.0 * t_k) * np.exp(-t_k * 5.0) * 0.022
             out[pos:pos + n_k] += creak
+        out += sub_rumble + howl + ice_drift
 
-    elif "bosque" in sc:
-        wind = np.random.normal(0, 1, n)
-        b, a = sps.butter(2, [450 / (SR / 2), 2200 / (SR / 2)], btype='band')
-        breeze = 0.60 + 0.40 * np.sin(2.0 * np.pi * 0.15 * t)
-        out += sps.lfilter(b, a, wind) * breeze * 0.009
-        num_leaves = int(duration / 6) + 1
+    # 2. ESCENAS DE LLUVIA Y TORMENTA (Tormenta 2h / Bunker)
+    elif any(k in sc for k in ("tormenta", "lluvia", "storm", "rain")):
+        # Capa continua de aguacero denso
+        b_rain, a_rain = sps.butter(2, [350 / (SR / 2), 3400 / (SR / 2)], btype='band')
+        rain_wash = sps.lfilter(b_rain, a_rain, np.random.normal(0, 1, n)) * 0.080
+        # Impacto estocastico de gotas de lluvia (pitter-patter sobre techo de chapa/concreto)
+        droplets = np.zeros(n)
+        num_drops = int(duration * 50)
+        for _ in range(num_drops):
+            pos = random.randint(0, max(0, n - 300))
+            d_len = random.randint(50, 220)
+            drop = np.random.normal(0, 0.038, d_len) * np.exp(-np.linspace(0, 7.5, d_len))
+            droplets[pos:pos + d_len] += drop
+        # Truenos lejanos y profundos (sub-graves calidos que ruedan)
+        thunders = np.zeros(n)
+        num_thunders = max(1, int(duration / 20))
+        for _ in range(num_thunders):
+            pos = random.randint(0, max(0, n - int(4.5 * SR)))
+            dur_th = 4.0
+            n_th = int(dur_th * SR)
+            t_th = np.linspace(0, dur_th, n_th, endpoint=False)
+            th_noise = np.random.normal(0, 1, n_th)
+            b_th, a_th = sps.butter(2, [22 / (SR / 2), 85 / (SR / 2)], btype='band')
+            th_env = (np.sin(np.pi * np.clip(t_th / dur_th, 0, 1)) ** 2) * np.exp(-t_th * 0.45)
+            thunders[pos:pos + n_th] += sps.lfilter(b_th, a_th, th_noise) * th_env * 0.095
+        out += rain_wash + droplets + thunders
+
+    # 3. ESCENAS DE SERVIDORES, REACTORES Y VENTILADORES (Reactor 2h / SCP Contencion / Servidores)
+    elif any(k in sc for k in ("reactor", "scp_contencion", "contencion", "servidor", "server", "ventilador")):
+        # Zumbido electromagnetico limpio de transformador (60 Hz + 120 Hz)
+        hum = np.sin(2.0 * np.pi * 60.0 * t) * 0.038 + np.sin(2.0 * np.pi * 120.0 * t) * 0.020 + np.sin(2.0 * np.pi * 180.0 * t) * 0.008
+        # Aspas de ventiladores industriales de alta velocidad (dos frecuencias desfasadas 185 Hz y 246 Hz)
+        fans = (np.sin(2.0 * np.pi * 184.0 * t) * 0.028 + np.sin(2.0 * np.pi * 246.0 * t) * 0.024)
+        # Flujo de aire masivo a traves de conductos y rejillas de racks
+        air_noise = np.random.normal(0, 1, n)
+        b_air, a_air = sps.butter(2, [320 / (SR / 2), 1750 / (SR / 2)], btype='band')
+        airflow = sps.lfilter(b_air, a_air, air_noise) * 0.070
+        # Actividad estocastica de discos duros y cabezales en racks (I/O seek clicks suaves)
+        hdd_clicks = np.zeros(n)
+        for _ in range(int(duration * 9)):
+            pos = random.randint(0, max(0, n - 250))
+            dur_c = random.randint(25, 65)
+            hdd_clicks[pos:pos + dur_c] += np.random.normal(0, 0.026, dur_c) * np.exp(-np.linspace(0, 6, dur_c))
+        out += hum + fans + airflow + hdd_clicks
+
+    # 4. BASE SUBMARINA (Submarina 2h / Oceano Profundo)
+    elif any(k in sc for k in ("submarina", "ocean", "deep")):
+        # Resonancia de casco bajo presion hidrostatica profunda (38 Hz + 76 Hz)
+        hull_hum = (np.sin(2.0 * np.pi * 38.0 * t) * 0.042 + np.sin(2.0 * np.pi * 76.0 * t) * 0.020)
+        flow_noise = np.random.normal(0, 1, n)
+        b_flow, a_flow = sps.butter(2, 260 / (SR / 2), btype='low')
+        water_flow = sps.lfilter(b_flow, a_flow, flow_noise) * 0.055
+        # Sonar de navegacion distante con eco espacial
+        num_pings = max(1, int(duration / 15))
+        for _ in range(num_pings):
+            pos = random.randint(0, max(0, n - int(3.0 * SR)))
+            dur_p = 2.5
+            n_p = int(dur_p * SR)
+            t_p = np.linspace(0, dur_p, n_p, endpoint=False)
+            ping = (np.sin(2.0 * np.pi * 680.0 * t_p) + 0.25 * np.sin(2.0 * np.pi * 1360.0 * t_p)) * np.exp(-t_p * 1.8) * 0.035
+            out[pos:pos + n_p] += ping
+        out += hull_hum + water_flow
+
+    # 5. ESTACION ORBITAL Y ESPACIO (Orbital 2h / Space)
+    elif any(k in sc for k in ("orbital", "space", "satelite")):
+        # Sistema de soporte vital presurizado (ECS airflow)
+        b_air, a_air = sps.butter(2, [140 / (SR / 2), 650 / (SR / 2)], btype='band')
+        ecs_flow = sps.lfilter(b_air, a_air, np.random.normal(0, 1, n)) * 0.052
+        # Giroscopios y zumbido electromecanico de orientacion
+        gyro = np.sin(2.0 * np.pi * 48.0 * t) * 0.026 + np.sin(2.0 * np.pi * 96.0 * t) * 0.012
+        # Micro-pulsos de telemetria cosmica
+        num_bursts = max(1, int(duration / 12))
+        for _ in range(num_bursts):
+            pos = random.randint(0, max(0, n - int(1.2 * SR)))
+            dur_b = 0.8
+            n_b = int(dur_b * SR)
+            t_b = np.linspace(0, dur_b, n_b, endpoint=False)
+            telemetry = np.sin(2.0 * np.pi * 1450.0 * t_b) * np.sin(2.0 * np.pi * 10.0 * t_b) * np.exp(-t_b * 3.8) * 0.018
+            out[pos:pos + n_b] += telemetry
+        out += ecs_flow + gyro
+
+    # 6. BOSQUE PROFUNDO (Bosque 2h)
+    elif any(k in sc for k in ("bosque", "forest", "nature")):
+        b_wind, a_wind = sps.butter(2, [320 / (SR / 2), 1800 / (SR / 2)], btype='band')
+        wind_lfo = 0.55 + 0.45 * np.sin(2.0 * np.pi * 0.12 * t)
+        canopy = sps.lfilter(b_wind, a_wind, np.random.normal(0, 1, n)) * wind_lfo * 0.050
+        num_leaves = int(duration / 4)
         for _ in range(num_leaves):
             pos = random.randint(0, max(0, n - int(1.2 * SR)))
             dur_l = 1.0
             n_l = int(dur_l * SR)
             t_l = np.linspace(0, dur_l, n_l, endpoint=False)
-            rustle = np.random.normal(0, 1, n_l)
-            b_r, a_r = sps.butter(2, [1200 / (SR / 2), 4500 / (SR / 2)], btype='band')
-            out[pos:pos + n_l] += sps.lfilter(b_r, a_r, rustle) * np.sin(np.pi * np.clip(t_l / dur_l, 0, 1)) * 0.006
+            b_r, a_r = sps.butter(2, [1400 / (SR / 2), 3800 / (SR / 2)], btype='band')
+            rustle = sps.lfilter(b_r, a_r, np.random.normal(0, 1, n_l)) * np.sin(np.pi * np.clip(t_l / dur_l, 0, 1)) * 0.022
+            out[pos:pos + n_l] += rustle
+        out += canopy
 
-    elif "submarina" in sc:
-        hull_hum = (np.sin(2.0 * np.pi * 42.0 * t) * 0.016 + np.sin(2.0 * np.pi * 84.0 * t) * 0.008)
-        flow_noise = np.random.normal(0, 1, n)
-        b, a = sps.butter(2, 280 / (SR / 2), btype='low')
-        out += hull_hum + sps.lfilter(b, a, flow_noise) * 0.012
-        num_pings = int(duration / 14) + 1
-        for _ in range(num_pings):
-            pos = random.randint(0, max(0, n - int(2.5 * SR)))
-            dur_p = 2.0
-            n_p = int(dur_p * SR)
-            t_p = np.linspace(0, dur_p, n_p, endpoint=False)
-            ping = (np.sin(2.0 * np.pi * 780.0 * t_p) + 0.3 * np.sin(2.0 * np.pi * 1560.0 * t_p)) * np.exp(-t_p * 2.2) * 0.009
-            out[pos:pos + n_p] += ping
+    # 7. DESIERTO (Desierto 2h)
+    elif any(k in sc for k in ("desierto", "desert", "arid")):
+        b_d, a_d = sps.butter(2, [180 / (SR / 2), 1100 / (SR / 2)], btype='band')
+        desert_lfo = 0.50 + 0.50 * np.sin(2.0 * np.pi * 0.08 * t)
+        d_wind = sps.lfilter(b_d, a_d, np.random.normal(0, 1, n)) * desert_lfo * 0.065
+        out += d_wind
 
-    elif "reactor" in sc:
-        reactor = (np.sin(2.0 * np.pi * 36.0 * t) * 0.018 + np.sin(2.0 * np.pi * 72.0 * t) * 0.009 + np.sin(2.0 * np.pi * 120.0 * t) * 0.005)
-        coolant = 0.82 + 0.18 * np.sin(2.0 * np.pi * 0.12 * t)
-        out += reactor * coolant
-        elec_hum = (np.sin(2.0 * np.pi * 60.0 * t) * 0.008 + np.sin(2.0 * np.pi * 180.0 * t) * 0.004)
-        spikes = (np.random.uniform(0, 1, n) > 0.998).astype(float) * np.random.normal(0, 1, n)
-        b, a = sps.butter(2, [2800 / (SR / 2), 7000 / (SR / 2)], btype='band')
-        out += elec_hum + sps.lfilter(b, a, spikes) * 0.007
+    # 8. CAMPO ELECTRICO / OBSERVATORIO (Electrica 2h / Array Suiza / SCP Exterior)
+    elif any(k in sc for k in ("electrica", "array", "suiza", "scp_exterior")):
+        b_e, a_e = sps.butter(2, [100 / (SR / 2), 950 / (SR / 2)], btype='band')
+        tower_hum = (np.sin(2.0 * np.pi * 100.0 * t) * 0.028 + np.sin(2.0 * np.pi * 200.0 * t) * 0.014)
+        cable_wind = sps.lfilter(b_e, a_e, np.random.normal(0, 1, n)) * 0.048
+        out += tower_hum + cable_wind
 
-    elif "tormenta" in sc:
-        heavy_rain = np.random.normal(0, 1, n)
-        b, a = sps.butter(2, [220 / (SR / 2), 4200 / (SR / 2)], btype='band')
-        out += sps.lfilter(b, a, heavy_rain) * 0.022
-        num_thunders = int(duration / 18) + 1
-        for _ in range(num_thunders):
-            pos = random.randint(0, max(0, n - int(4.0 * SR)))
-            dur_th = 3.5
-            n_th = int(dur_th * SR)
-            t_th = np.linspace(0, dur_th, n_th, endpoint=False)
-            th_noise = np.random.normal(0, 1, n_th)
-            b_th, a_th = sps.butter(2, [35 / (SR / 2), 160 / (SR / 2)], btype='band')
-            rumble = sps.lfilter(b_th, a_th, th_noise) * np.sin(np.pi * np.clip(t_th / dur_th, 0, 1)) ** 2 * 0.024
-            out[pos:pos + n_th] += rumble
+    # 9. CALDERA VOLCANICA (Volcanica 2h)
+    elif any(k in sc for k in ("volcanica", "volcano", "magma")):
+        b_v, a_v = sps.butter(2, [24 / (SR / 2), 120 / (SR / 2)], btype='band')
+        magma_rumble = sps.lfilter(b_v, a_v, np.random.normal(0, 1, n)) * (0.7 + 0.3 * np.sin(2.0 * np.pi * 0.04 * t)) * 0.075
+        out += magma_rumble
 
-    elif "orbital" in sc or "space" in sc:
-        life_hum = np.sin(2.0 * np.pi * 48.0 * t) * 0.010
-        rcs_noise = np.random.normal(0, 1, n)
-        b, a = sps.butter(2, [120 / (SR / 2), 480 / (SR / 2)], btype='band')
-        out += life_hum + sps.lfilter(b, a, rcs_noise) * 0.006
-        num_bursts = int(duration / 16) + 1
-        for _ in range(num_bursts):
-            pos = random.randint(0, max(0, n - int(1.2 * SR)))
-            dur_b = 0.9
-            n_b = int(dur_b * SR)
-            t_b = np.linspace(0, dur_b, n_b, endpoint=False)
-            telemetry = np.sin(2.0 * np.pi * 1850.0 * t_b) * np.sin(2.0 * np.pi * 12.0 * t_b) * np.exp(-t_b * 3.5) * 0.005
-            out[pos:pos + n_b] += telemetry
-
+    # 10. CAFETERIA / CIUDAD NOCTURNA (Veo3 Manana/Tarde/Noche, Latam Noche)
     else:
-        hum = np.sin(2.0 * np.pi * 50.0 * t) * 0.008
-        ambient_air = np.random.normal(0, 1, n)
-        b, a = sps.butter(2, [200 / (SR / 2), 800 / (SR / 2)], btype='band')
-        out += hum + sps.lfilter(b, a, ambient_air) * 0.007
+        rain_soft = np.random.normal(0, 1, n)
+        b_rain, a_rain = sps.butter(2, [280 / (SR / 2), 2400 / (SR / 2)], btype='band')
+        out += sps.lfilter(b_rain, a_rain, rain_soft) * 0.045
+        num_clinks = max(1, int(duration / 15))
+        for _ in range(num_clinks):
+            pos = random.randint(0, max(0, n - int(0.8 * SR)))
+            dur_c = 0.6
+            n_c = int(dur_c * SR)
+            t_c = np.linspace(0, dur_c, n_c, endpoint=False)
+            clink = (np.sin(2.0 * np.pi * 2200.0 * t_c) * 0.4 + np.sin(2.0 * np.pi * 3800.0 * t_c) * 0.2) * np.exp(-t_c * 24.0) * 0.018
+            out[pos:pos + n_c] += clink
 
     return out
-
-
 # 4. PALETA DE 16 PROGRESIONES ARMÓNICAS RICAS (CAFE & SCI-FI)
 # ─────────────────────────────────────────────────────────────
 
@@ -763,7 +818,7 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
                     idx_h = int((bar_start + h_pos * beat_dur) * SR)
                     if idx_h < total_samples:
                         h_len = min(len(hat_sample), total_samples - idx_h)
-                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.40
+                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.18
 
             elif rhythm_style == 2:  # Classic Boom-bap con swing suave
                 for b_pos in [0, 1, 2, 3]:
@@ -772,7 +827,7 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
                     # Hats en cada negra y corchea
                     if idx_b < total_samples:
                         h_len = min(len(hat_sample), total_samples - idx_b)
-                        drum_bus[idx_b:idx_b + h_len] += hat_sample[:h_len] * 0.50
+                        drum_bus[idx_b:idx_b + h_len] += hat_sample[:h_len] * 0.20
                     # Bombo en 0 y 2.5
                     if b_pos == 0 and idx_b < total_samples:
                         k_len = min(len(kick_sample), total_samples - idx_b)
@@ -815,7 +870,7 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
                     idx_h = max(0, int(pos_h * SR))
                     if 0 <= idx_h < total_samples:
                         h_len = min(len(hat_sample), total_samples - idx_h)
-                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * random.uniform(0.25, 0.48)
+                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * random.uniform(0.12, 0.22)
 
             elif rhythm_style == 4:  # Bossa Nova cross-stick
                 # Kicks continuos suaves en 0 y 2
@@ -835,7 +890,7 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
                     idx_h = int((bar_start + (step * 0.5) * beat_dur) * SR)
                     if idx_h < total_samples:
                         h_len = min(len(hat_sample), total_samples - idx_h)
-                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.35
+                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.16
 
             elif rhythm_style == 5:  # Laidback Shaker & Ride con platillo abierto
                 # Kick suave solo en beat 0
@@ -852,27 +907,27 @@ def compose_track(scene_name: str, mode: str, num_bars: int = 16) -> np.ndarray:
                 idx_open = int((bar_start + 3.5 * beat_dur) * SR)
                 if idx_open < total_samples:
                     o_len = min(len(open_hat_sample), total_samples - idx_open)
-                    drum_bus[idx_open:idx_open + o_len] += open_hat_sample[:o_len] * 0.40
+                    drum_bus[idx_open:idx_open + o_len] += open_hat_sample[:o_len] * 0.20
                 # Shakers orgánicos continuos
                 for step in range(8):
                     idx_h = int((bar_start + (step * 0.5) * beat_dur) * SR)
                     if idx_h < total_samples:
                         h_len = min(len(hat_sample), total_samples - idx_h)
-                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.32
+                        drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.16
         else:
             # En el breakdown solo platillos o shakers muy tenues
             for step in range(4):
                 idx_h = int((bar_start + step * beat_dur) * SR)
                 if idx_h < total_samples:
                     h_len = min(len(hat_sample), total_samples - idx_h)
-                    drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.22
+                    drum_bus[idx_h:idx_h + h_len] += hat_sample[:h_len] * 0.08
 
     # ─── MASTER STEREO BUS & PROCESAMIENTO ANALÓGICO ───
     stereo = np.zeros((2, total_samples))
-    mix_l = (rhodes_bus * 0.58 + bass_bus * 0.70 + drum_bus * 0.82 + 
-             foley_bus * 0.55 + melody_bus * 0.52 + vinyl_bus * 0.75)
-    mix_r = (rhodes_bus * 0.58 + bass_bus * 0.70 + drum_bus * 0.82 + 
-             foley_bus * 0.55 + melody_bus * 0.46 + vinyl_bus * 0.75)
+    mix_l = (rhodes_bus * 0.62 + bass_bus * 0.72 + drum_bus * 0.62 + 
+             foley_bus * 0.75 + melody_bus * 0.48 + vinyl_bus * 0.48)
+    mix_r = (rhodes_bus * 0.62 + bass_bus * 0.72 + drum_bus * 0.62 + 
+             foley_bus * 0.75 + melody_bus * 0.44 + vinyl_bus * 0.48)
     stereo[0] = mix_l
     stereo[1] = mix_r
 
